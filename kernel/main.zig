@@ -1,29 +1,15 @@
-const std = @import("std");
+const builtin = @import("builtin");
 
-const uart = @import("uart.zig");
+const serial = @import("serial.zig");
 
-export fn kernel_init() callconv(.C) noreturn {
-    uart.init();
+export fn kernel_init() callconv(.SysV) if (builtin.mode == .Debug) u32 else noreturn {
+    serial.writer().writeAll("Hello from kernel_init\n") catch unreachable;
 
-    uart.writer().writeAll("Hello, world!\n") catch unreachable;
-
-    while (true) {
-        if (uart.tryReadByte()) |c| {
-            switch (c) {
-                '\u{0008}', '\u{007F}' => uart.writer().writeAll("\u{0008} \u{0008}") catch unreachable,
-                '\r', '\n' => uart.writer().writeByte('\n') catch unreachable,
-                else => uart.writer().writeByte(c) catch unreachable,
-            }
-        }
+    if (builtin.mode == .Debug) {
+        return 42;
     }
-}
-
-pub fn panic(_: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
-    @setCold(true);
-
-    uart.writer().writeAll("Kernel panic\n") catch unreachable;
 
     while (true) {
-        asm volatile ("wfi");
+        asm volatile ("hlt");
     }
 }

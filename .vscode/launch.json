@@ -5,29 +5,15 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "(gdb) Launch",
+            "name": "Debug",
             "type": "cppdbg",
             "request": "launch",
-            "preLaunchTask": "build",
-            "program": "${workspaceRoot}/zig-out/bin/kernel.elf",
+            "program": "${workspaceRoot}/zig-out/hdd/EFI/BOOT/BOOTX64.efi",
+            "launchCompleteCommand": "exec-continue",
             "args": [],
-            "cwd": "${workspaceRoot}/zig-out/bin",
-            "MIMode": "gdb",
-            "setupCommands": [
-                {
-                    "description": "Enable pretty-printing for gdb",
-                    "text": "-enable-pretty-printing",
-                    "ignoreFailures": true
-                },
-                {
-                    "description": "Set Disassembly Flavor to Intel",
-                    "text": "-gdb-set disassembly-flavor intel",
-                    "ignoreFailures": true
-                }
-            ],
-            "miDebuggerPath": "/usr/bin/riscv64-elf-gdb",
-            "miDebuggerServerAddress": "localhost:1234",
-            "stopAtEntry": true
+            "cwd": "${workspaceRoot}",
+            "MIMode": "lldb",
+            "miDebuggerServerAddress": "localhost:1234"
         }
     ]
 }

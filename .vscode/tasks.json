@@ -6,7 +6,35 @@
         {
             "label": "build",
             "type": "shell",
+            "command": "zig build test",
+            "dependsOn": "build without tests"
+        },
+        {
+            "label": "build without tests",
+            "type": "shell",
             "command": "zig build"
+        },
+        {
+            "label": "launch QEMU",
+            "type": "shell",
+            "isBackground": true,
+            "dependsOn": "build",
+            "command": "qemu-system-x86_64",
+            "args": [
+                "-s",
+                "-S",
+                "-d",
+                "guest_errors,unimp",
+                "-drive",
+                "if=pflash,format=raw,readonly=on,file=/usr/share/edk2-ovmf/x64/OVMF_CODE.fd",
+                "-drive",
+                "if=pflash,format=raw,file=${workspaceRoot}/zig-out/OVMF_VARS.fd",
+                "-hdd",
+                "fat:rw:${workspaceRoot}/zig-out/hdd",
+                "-serial",
+                "stdio"
+            ],
+            "problemMatcher": []
         }
     ]
 }
