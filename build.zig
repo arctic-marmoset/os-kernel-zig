@@ -17,7 +17,7 @@ pub fn build(b: *std.Build) void {
     });
     bootloader.emit_asm = .emit;
 
-    const install_ovmf_vars = b.addInstallFile(.{ .path = "/usr/share/edk2-ovmf/x64/OVMF_VARS.fd" }, "OVMF_VARS.fd");
+    const install_ovmf_vars = b.addInstallFile(.{ .path = "vendor/edk2-ovmf/x64/OVMF_VARS.fd" }, "OVMF_VARS.fd");
     bootloader.step.dependOn(&install_ovmf_vars.step);
 
     const kernel = b.addExecutable(.{
@@ -35,8 +35,8 @@ pub fn build(b: *std.Build) void {
     kernel.red_zone = false;
 
     const make_hdd_structure_step = b.step("hdd", "Make HDD directory structure");
-    const copy_bootloader = b.addInstallFile(bootloader.getOutputSource(), "hdd/EFI/BOOT/BOOTX64.efi");
-    const copy_bootloader_debug_symbols = b.addInstallFile(bootloader.getOutputPdbSource(), "hdd/EFI/BOOT/BOOTX64.pdb");
+    const copy_bootloader = b.addInstallFile(bootloader.getOutputSource(), "hdd/EFI/BOOT/bootx64.efi");
+    const copy_bootloader_debug_symbols = b.addInstallFile(bootloader.getOutputPdbSource(), "hdd/EFI/BOOT/bootx64.pdb");
     const copy_kernel = b.addInstallFile(kernel.getOutputSource(), "hdd/kernel.elf");
     make_hdd_structure_step.dependOn(&copy_bootloader.step);
     make_hdd_structure_step.dependOn(&copy_bootloader_debug_symbols.step);
