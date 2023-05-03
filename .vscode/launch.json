@@ -13,7 +13,18 @@
             "args": [],
             "cwd": "${workspaceRoot}",
             "MIMode": "lldb",
-            "miDebuggerServerAddress": "localhost:1234"
+            "targetArchitecture": "x64",
+            "customLaunchSetupCommands": [
+                {
+                    "text": "target delete 0"
+                },
+                {
+                    "text": "target create --no-dependents ${workspaceRoot}/zig-out/hdd/EFI/BOOT/BOOTX64.efi --symfile ${workspaceRoot}/zig-out/hdd/EFI/BOOT/BOOTX64.pdb"
+                },
+                {
+                    "text": "gdb-remote localhost:1234"
+                }
+            ]
         }
     ]
 }
