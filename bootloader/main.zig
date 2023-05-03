@@ -1,8 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const serial = @import("serial.zig");
-
 const fmt = std.fmt;
 const uefi = std.os.uefi;
 const unicode = std.unicode;
@@ -14,77 +12,83 @@ pub fn main() uefi.Status {
 
     _ = uefi.system_table.con_out.?.clearScreen();
 
-    serial.init();
-    std.log.debug("COM1 initialised", .{});
-
     const boot_services = uefi.system_table.boot_services.?;
 
-    var loaded_image: *uefi.protocols.LoadedImageProtocol = undefined;
-    status = boot_services.handleProtocol(
-        uefi.handle,
-        &uefi.protocols.LoadedImageProtocol.guid,
-        @ptrCast(*?*anyopaque, &loaded_image),
-    );
-    if (status != .Success) {
-        std.log.err("failed to get LoadedImage: {}", .{status});
-        return status;
-    }
+    const loaded_image = blk: {
+        var result: *const uefi.protocols.LoadedImageProtocol = undefined;
+
+        status = boot_services.handleProtocol(
+            uefi.handle,
+            &uefi.protocols.LoadedImageProtocol.guid,
+            @ptrCast(*?*anyopaque, &result),
+        );
+        if (status != .Success) {
+            std.log.err("failed to get LoadedImage: {}", .{status});
+            return status;
+        }
+
+        break :blk result;
+    };
 
     std.log.debug("image base address: 0x{X}", .{@ptrToInt(loaded_image.image_base)});
 
-    // std.log.debug("waiting for debugger", .{});
-    // var waiting = true;
-    // while (waiting) {
-    //     asm volatile ("hlt");
-    // }
-
-    var file_system: *uefi.protocols.SimpleFileSystemProtocol = undefined;
-    status = boot_services.handleProtocol(
-        loaded_image.device_handle.?,
-        &uefi.protocols.SimpleFileSystemProtocol.guid,
-        @ptrCast(*?*anyopaque, &file_system),
-    );
-    if (status != .Success) {
-        std.log.err("failed to get SimpleFileSystem: {}", .{status});
-        return status;
+    if (builtin.mode == .Debug) {
+        std.log.debug("waiting for debugger", .{});
+        var waiting = true;
+        while (waiting) {
+            asm volatile ("hlt");
+        }
     }
 
-    var directory: *const uefi.protocols.FileProtocol = undefined;
-    status = file_system.openVolume(&directory);
-    if (status != .Success) {
-        std.log.err("failed to open volume: {}", .{status});
-        return status;
-    }
+    const file_system = blk: {
+        var result: *const uefi.protocols.SimpleFileSystemProtocol = undefined;
+
+        status = boot_services.handleProtocol(
+            loaded_image.device_handle.?,
+            &uefi.protocols.SimpleFileSystemProtocol.guid,
+            @ptrCast(*?*anyopaque, &result),
+        );
+        if (status != .Success) {
+            std.log.err("failed to get SimpleFileSystem: {}", .{status});
+            return status;
+        }
+
+        break :blk result;
+    };
+
+    const volume = blk: {
+        var result: *const uefi.protocols.FileProtocol = undefined;
+
+        status = file_system.openVolume(&result);
+        if (status != .Success) {
+            std.log.err("failed to open volume: {}", .{status});
+            return status;
+        }
+
+        break :blk result;
+    };
 
     const kernel_file_path = "kernel.elf";
-    var kernel_file: *uefi.protocols.FileProtocol = undefined;
-    status = directory.open(
-        &kernel_file,
-        L(kernel_file_path),
-        uefi.protocols.FileProtocol.efi_file_mode_read,
-        uefi.protocols.FileProtocol.efi_file_read_only,
-    );
-    if (status != .Success) {
-        std.log.err("failed to open kernel file '{s}': {}", .{ kernel_file_path, status });
-        return status;
-    }
+    const kernel_file = blk: {
+        var result: *uefi.protocols.FileProtocol = undefined;
+
+        status = volume.open(
+            &result,
+            L(kernel_file_path),
+            uefi.protocols.FileProtocol.efi_file_mode_read,
+            uefi.protocols.FileProtocol.efi_file_read_only,
+        );
+        if (status != .Success) {
+            std.log.err("failed to open kernel file '{s}': {}", .{ kernel_file_path, status });
+            return status;
+        }
+
+        break :blk result;
+    };
 
     std.log.debug("opened kernel file '{s}'", .{kernel_file_path});
 
-    // Add an extra 256 bytes for good measure.
-    const file_info_size_guess: usize = @sizeOf(uefi.protocols.FileInfo) + 256;
-    var file_info_size = file_info_size_guess;
-    var file_info_buffer: [file_info_size_guess]u8 align(@alignOf(uefi.protocols.FileInfo)) = undefined;
-    status = kernel_file.getInfo(&uefi.protocols.FileInfo.guid, &file_info_size, &file_info_buffer);
-    if (status != .Success) {
-        std.log.err("failed to get FileInfo: {}", .{status});
-        return status;
-    }
-
-    var kernel_size: usize = @sizeOf(std.elf.Ehdr);
-    var raw_header: std.elf.Ehdr = undefined;
-    _ = kernel_file.read(&kernel_size, std.mem.asBytes(&raw_header));
-    const header = std.elf.Header.parse(std.mem.asBytes(&raw_header)) catch |e| {
+    const header = std.elf.Header.read(kernel_file) catch |e| {
         std.log.err("failed to parse ELF header: {}", .{e});
         return .InvalidParameter;
     };
@@ -106,7 +110,7 @@ pub fn main() uefi.Status {
                 std.log.debug("segment belongs to page with address: 0x{X}", .{page_address});
 
                 var entry = allocated_page_addresses.getOrPut(page_address) catch |e| {
-                    std.log.err("failed to add page address to set: {}", .{e});
+                    std.log.err("failed to add page address to map: {}", .{e});
                     return .LoadError;
                 };
 

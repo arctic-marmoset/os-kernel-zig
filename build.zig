@@ -6,7 +6,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const bootloader = b.addExecutable(.{
-        .name = "BOOTX64",
+        .name = "bootx64",
         .root_source_file = .{ .path = "bootloader/main.zig" },
         .target = std.zig.CrossTarget{
             .cpu_arch = .x86_64,
