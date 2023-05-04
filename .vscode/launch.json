@@ -8,23 +8,12 @@
             "name": "Debug",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceRoot}/zig-out/hdd/EFI/BOOT/BOOTX64.efi",
+            "program": "${workspaceRoot}/zig-out/hdd/EFI/BOOT/bootx64.efi",
             "launchCompleteCommand": "exec-continue",
             "args": [],
             "cwd": "${workspaceRoot}",
             "MIMode": "lldb",
-            "targetArchitecture": "x64",
-            "customLaunchSetupCommands": [
-                {
-                    "text": "target delete 0"
-                },
-                {
-                    "text": "target create --no-dependents ${workspaceRoot}/zig-out/hdd/EFI/BOOT/BOOTX64.efi --symfile ${workspaceRoot}/zig-out/hdd/EFI/BOOT/BOOTX64.pdb"
-                },
-                {
-                    "text": "gdb-remote localhost:1234"
-                }
-            ]
+            "miDebuggerServerAddress": "localhost:1234"
         }
     ]
 }
