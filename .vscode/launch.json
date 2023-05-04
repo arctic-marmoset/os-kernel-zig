@@ -5,7 +5,19 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug",
+            "name": "Debug (codelldb)",
+            "type": "lldb",
+            "request": "custom",
+            "targetCreateCommands": [
+                "target create --no-dependents --arch x86_64 ${workspaceRoot}/zig-out/hdd/EFI/BOOT/bootx64.efi --symfile ${workspaceRoot}/zig-out/hdd/EFI/BOOT/bootx64.pdb"
+            ],
+            "processCreateCommands": [
+                "command script import .lldb/uefi.py",
+                "gdb-remote localhost:1234"
+            ]
+        },
+        {
+            "name": "Debug (cppdbg)",
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceRoot}/zig-out/hdd/EFI/BOOT/bootx64.efi",
