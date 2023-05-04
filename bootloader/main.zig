@@ -8,8 +8,6 @@ const unicode = std.unicode;
 const L = unicode.utf8ToUtf16LeStringLiteral;
 
 pub fn main() uefi.Status {
-    var status: uefi.Status = undefined;
-
     _ = uefi.system_table.con_out.?.clearScreen();
 
     const boot_services = uefi.system_table.boot_services.?;
@@ -17,7 +15,7 @@ pub fn main() uefi.Status {
     const loaded_image = blk: {
         var result: *const uefi.protocols.LoadedImageProtocol = undefined;
 
-        status = boot_services.handleProtocol(
+        const status = boot_services.handleProtocol(
             uefi.handle,
             &uefi.protocols.LoadedImageProtocol.guid,
             @ptrCast(*?*anyopaque, &result),
@@ -43,7 +41,7 @@ pub fn main() uefi.Status {
     const file_system = blk: {
         var result: *const uefi.protocols.SimpleFileSystemProtocol = undefined;
 
-        status = boot_services.handleProtocol(
+        const status = boot_services.handleProtocol(
             loaded_image.device_handle.?,
             &uefi.protocols.SimpleFileSystemProtocol.guid,
             @ptrCast(*?*anyopaque, &result),
@@ -59,7 +57,7 @@ pub fn main() uefi.Status {
     const volume = blk: {
         var result: *const uefi.protocols.FileProtocol = undefined;
 
-        status = file_system.openVolume(&result);
+        const status = file_system.openVolume(&result);
         if (status != .Success) {
             std.log.err("failed to open volume: {}", .{status});
             return status;
@@ -72,7 +70,7 @@ pub fn main() uefi.Status {
     const kernel_file = blk: {
         var result: *uefi.protocols.FileProtocol = undefined;
 
-        status = volume.open(
+        const status = volume.open(
             &result,
             L(kernel_file_path),
             uefi.protocols.FileProtocol.efi_file_mode_read,
@@ -120,7 +118,7 @@ pub fn main() uefi.Status {
                     entry.value_ptr.* = page_count;
                     std.log.debug("allocating {} pages starting at address: 0x{X}", .{ page_count, page_address });
                     var page = @intToPtr([*]align(4096) u8, page_address);
-                    status = boot_services.allocatePages(.AllocateAddress, .LoaderData, page_count, &page);
+                    const status = boot_services.allocatePages(.AllocateAddress, .LoaderData, page_count, &page);
                     if (status != .Success) {
                         std.log.err("failed to allocate pages: {}", .{status});
                         return status;
