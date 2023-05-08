@@ -30,9 +30,7 @@
                 "-drive",
                 "if=pflash,format=raw,file=zig-out/OVMF_VARS.fd",
                 "-hdd",
-                "fat:rw:zig-out/hdd",
-                "-serial",
-                "stdio"
+                "fat:rw:zig-out/hdd"
             ],
             "problemMatcher": []
         }
