@@ -35,8 +35,9 @@ def load_symbols(
     BINARY_NAME_WITH_EXT = f"{BINARY_NAME}.efi"
 
     address_str = argv[0]
-    binary_path = argv[1] if argc > 1 else f"zig-out/hdd/EFI/BOOT/{BINARY_NAME_WITH_EXT}"
-    symbols_path = argv[2] if argc > 2 else f"zig-out/hdd/EFI/BOOT/{BINARY_NAME}.pdb"
+    wait_variable_name = argv[1] if argc > 1 else "waiting"
+    binary_path = argv[2] if argc > 2 else f"zig-out/hdd/EFI/BOOT/{BINARY_NAME_WITH_EXT}"
+    symbols_path = argv[3] if argc > 3 else f"zig-out/hdd/EFI/BOOT/{BINARY_NAME}.pdb"
 
     binary_name_with_ext = os.path.basename(binary_path)
 
@@ -67,7 +68,7 @@ def load_symbols(
     PE_MAGIC = 0x785A4D
 
     error = lldb.SBError()
-    base_address = address & 0xFFFFFFFFFFFFF000
+    base_address = address & 0xFFFFF000
     while exe_ctx.process.ReadUnsignedFromMemory(base_address, 4, error) != PE_MAGIC:
         if error.Fail():
             result.SetError(error)
@@ -77,3 +78,4 @@ def load_symbols(
     print(f'base address: 0x{base_address:08x}')
     debugger.HandleCommand(f"target symbols add {symbols_path}")
     debugger.HandleCommand(f"target modules load --file {binary_name_with_ext} --slide {base_address}")
+    debugger.HandleCommand(f"expr {wait_variable_name} = 0")
