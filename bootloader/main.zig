@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const kernel = @import("kernel");
 
 const elf = std.elf;
 const fmt = std.fmt;
@@ -10,6 +11,7 @@ const unicode = std.unicode;
 
 const AutoHashMap = std.AutoHashMap;
 const FileProtocol = uefi.protocols.FileProtocol;
+const GraphicsOutputProtocol = uefi.protocols.GraphicsOutputProtocol;
 const LoadedImageProtocol = uefi.protocols.LoadedImageProtocol;
 const SimpleFileSystemProtocol = uefi.protocols.SimpleFileSystemProtocol;
 
@@ -38,13 +40,13 @@ pub fn main() uefi.Status {
 
     log.debug("image base address: 0x{X}", .{@ptrToInt(loaded_image.image_base)});
 
-    if (builtin.mode == .Debug) {
-        log.debug("waiting for debugger", .{});
-        var waiting = true;
-        while (waiting) {
-            asm volatile ("hlt");
-        }
-    }
+    // if (builtin.mode == .Debug) {
+    //     log.debug("waiting for debugger", .{});
+    //     var waiting = true;
+    //     while (waiting) {
+    //         asm volatile ("hlt");
+    //     }
+    // }
 
     const file_system = blk: {
         var result: *const SimpleFileSystemProtocol = undefined;
@@ -156,30 +158,51 @@ pub fn main() uefi.Status {
     const kernel_entry_address = header.entry;
     log.debug("kernel entry address: 0x{X}", .{kernel_entry_address});
 
-    if (builtin.mode == .Debug) {
-        log.debug("calling kernel entry point", .{});
-        const kernel_entry = @intToPtr(*fn () callconv(.SysV) u32, kernel_entry_address);
-        const kernel_status = kernel_entry();
-        log.debug("kernel returned with status code: 0x{X}", .{kernel_status});
+    var graphics_output = blk: {
+        var result: *const GraphicsOutputProtocol = undefined;
 
-        while (true) {
-            asm volatile ("hlt");
+        const status = boot_services.locateProtocol(
+            &GraphicsOutputProtocol.guid,
+            null,
+            @ptrCast(*?*anyopaque, &result),
+        );
+        if (status != .Success) {
+            log.err("failed to locate GraphicsOutputProtocol: {}", .{status});
+            return status;
         }
-    }
 
-    var zero_size: usize = 0;
-    var zero_version: u32 = 0;
-    var map_key: usize = undefined;
-    _ = boot_services.getMemoryMap(&zero_size, null, &map_key, &zero_size, &zero_version);
-    _ = boot_services.exitBootServices(uefi.handle, map_key);
-    log.debug("jumping to kernel entry point", .{});
-    const kernel_entry = @intToPtr(*fn () callconv(.SysV) noreturn, kernel_entry_address);
-    asm volatile (
-        \\jmpq      *%[destination]
-        :
-        : [destination] "r" (kernel_entry),
-    );
-    unreachable;
+        break :blk result;
+    };
+
+    log.debug("{}", .{graphics_output.mode});
+
+    log.debug("calling kernel entry point", .{});
+    @intToPtr(*kernel.EntryFn, kernel_entry_address)(&.{
+        .graphics = .{
+            .frame_buffer_base = graphics_output.mode.frame_buffer_base,
+            .frame_buffer_size = graphics_output.mode.frame_buffer_size,
+            .horizontal_resolution = graphics_output.mode.info.horizontal_resolution,
+            .vertical_resolution = graphics_output.mode.info.vertical_resolution,
+            .pixel_format = graphics_output.mode.info.pixel_format,
+            .pixel_information = graphics_output.mode.info.pixel_information,
+            .pixels_per_scan_line = graphics_output.mode.info.pixels_per_scan_line,
+        },
+    });
+
+    // TODO: Call exitBootServices and jump to kernel instead of calling entry point:
+    // var zero_size: usize = 0;
+    // var zero_version: u32 = 0;
+    // var map_key: usize = undefined;
+    // _ = boot_services.getMemoryMap(&zero_size, null, &map_key, &zero_size, &zero_version);
+    // _ = boot_services.exitBootServices(uefi.handle, map_key);
+    // log.debug("jumping to kernel entry point", .{});
+    // const kernel_entry = @intToPtr(*fn () callconv(.SysV) noreturn, kernel_entry_address);
+    // asm volatile (
+    //     \\jmpq      *%[destination]
+    //     :
+    //     : [destination] "r" (kernel_entry),
+    // );
+    // unreachable;
 }
 
 pub const std_options = struct {

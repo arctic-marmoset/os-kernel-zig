@@ -5,10 +5,14 @@ pub fn build(b: *std.Build) void {
 
     const optimize = b.standardOptimizeOption(.{});
 
+    const kernel_interface = b.createModule(.{
+        .source_file = .{ .path = "kernel/kernel.zig" },
+    });
+
     const bootloader = b.addExecutable(.{
         .name = "bootx64",
         .root_source_file = .{ .path = "bootloader/main.zig" },
-        .target = std.zig.CrossTarget{
+        .target = .{
             .cpu_arch = .x86_64,
             .os_tag = .uefi,
             .abi = .msvc,
@@ -16,6 +20,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     bootloader.emit_asm = .emit;
+    bootloader.addModule("kernel", kernel_interface);
 
     const install_ovmf_vars = b.addInstallFile(.{ .path = "vendor/edk2-ovmf/x64/OVMF_VARS.fd" }, "OVMF_VARS.fd");
     bootloader.step.dependOn(&install_ovmf_vars.step);
@@ -23,7 +28,7 @@ pub fn build(b: *std.Build) void {
     const kernel = b.addExecutable(.{
         .name = "kernel",
         .root_source_file = .{ .path = "kernel/main.zig" },
-        .target = std.zig.CrossTarget{
+        .target = .{
             .cpu_arch = .x86_64,
             .os_tag = .freestanding,
             .abi = .none,
