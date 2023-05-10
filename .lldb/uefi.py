@@ -1,4 +1,4 @@
-# Adapted for LLDB from https://github.com/x1tan/rust-uefi-runtime-driver.
+# From https://github.com/x1tan/rust-uefi-runtime-driver. Adapted for LLDB.
 
 try:
     import lldb
@@ -23,18 +23,13 @@ def load_symbols(
     result: lldb.SBCommandReturnObject,
     internal_dict: dict,
 ):
-    ARGC_MIN = 1
-
     argv = command.split()
     argc = len(argv)
-    if argc < ARGC_MIN:
-        result.SetError(f"expected minimum argument count of {ARGC_MIN}, got {argc}")
-        return
 
     BINARY_NAME = "bootx64"
     BINARY_NAME_WITH_EXT = f"{BINARY_NAME}.efi"
 
-    address_str = argv[0]
+    address_str = argv[0] if argc > 0 else "$rip"
     wait_variable_name = argv[1] if argc > 1 else "waiting"
     binary_path = argv[2] if argc > 2 else f"zig-out/hdd/EFI/BOOT/{BINARY_NAME_WITH_EXT}"
     symbols_path = argv[3] if argc > 3 else f"zig-out/hdd/EFI/BOOT/{BINARY_NAME}.pdb"
