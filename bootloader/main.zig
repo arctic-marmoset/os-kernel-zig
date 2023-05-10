@@ -180,21 +180,18 @@ fn loadKernel(kernel_entry: **const kernel.EntryFn) uefi.Status {
                 log.debug("segment size in memory: 0x{0X} ({0} Bytes)", .{segment_size_in_memory});
 
                 const page_address = (program_header.p_paddr / mem.page_size) * mem.page_size;
-                var entry = allocated_page_addresses.getOrPut(page_address) catch |e| {
-                    log.err("failed to add page address to map: {}", .{e});
+                const page_count = (segment_size_in_memory + mem.page_size - 1) / mem.page_size;
+                allocated_page_addresses.put(page_address, page_count) catch |e| {
+                    log.err("failed to add page address 0x{X} to HashMap: {}", .{ page_address, e });
                     return .LoadError;
                 };
 
-                if (!entry.found_existing) {
-                    const page_count = (segment_size_in_memory + mem.page_size - 1) / mem.page_size;
-                    entry.value_ptr.* = page_count;
-                    log.debug("allocating {} page(s) starting at address: 0x{X}", .{ page_count, page_address });
-                    var page = @intToPtr([*]align(4096) u8, page_address);
-                    const status = boot_services.allocatePages(.AllocateAddress, .LoaderData, page_count, &page);
-                    if (status != .Success) {
-                        log.err("failed to allocate page(s): {}", .{status});
-                        return status;
-                    }
+                log.debug("allocating {} page(s) starting at address: 0x{X}", .{ page_count, page_address });
+                var page = @intToPtr([*]align(4096) u8, page_address);
+                const status = boot_services.allocatePages(.AllocateAddress, .LoaderData, page_count, &page);
+                if (status != .Success) {
+                    log.err("failed to allocate page(s): {}", .{status});
+                    return status;
                 }
 
                 const segment = @intToPtr([*]u8, segment_address);
