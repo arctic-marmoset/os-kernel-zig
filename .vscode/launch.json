@@ -13,7 +13,8 @@
             ],
             "processCreateCommands": [
                 "command script import .lldb/uefi.py",
-                "gdb-remote localhost:1234"
+                "gdb-remote localhost:1234",
+                "c"
             ]
         },
         {
