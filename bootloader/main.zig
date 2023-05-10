@@ -2,6 +2,8 @@ const std = @import("std");
 const builtin = @import("builtin");
 const kernel = @import("kernel");
 
+const serial = @import("serial.zig");
+
 const elf = std.elf;
 const fmt = std.fmt;
 const log = std.log;
@@ -14,37 +16,35 @@ const FileProtocol = uefi.protocols.FileProtocol;
 const GraphicsOutputProtocol = uefi.protocols.GraphicsOutputProtocol;
 const LoadedImageProtocol = uefi.protocols.LoadedImageProtocol;
 const SimpleFileSystemProtocol = uefi.protocols.SimpleFileSystemProtocol;
+const StackTrace = std.builtin.StackTrace;
 
 const L = unicode.utf8ToUtf16LeStringLiteral;
 
 pub fn main() uefi.Status {
     var status: uefi.Status = undefined;
 
-    var graphics_output = blk: {
-        var result: *const GraphicsOutputProtocol = undefined;
+    serial.init();
 
-        status = uefi.system_table.boot_services.?.locateProtocol(
+    var kernel_entry: *const kernel.EntryFn = undefined;
+    status = loadKernel(&kernel_entry);
+    if (status != .Success) return status;
+    log.debug("kernel entry address: 0x{X}", .{@ptrToInt(kernel_entry)});
+
+    const boot_services = uefi.system_table.boot_services.?;
+    const graphics = blk: {
+        var graphics_output: *const GraphicsOutputProtocol = undefined;
+
+        status = boot_services.locateProtocol(
             &GraphicsOutputProtocol.guid,
             null,
-            @ptrCast(*?*anyopaque, &result),
+            @ptrCast(*?*anyopaque, &graphics_output),
         );
         if (status != .Success) {
             log.err("failed to locate GraphicsOutputProtocol: {}", .{status});
             return status;
         }
 
-        break :blk result;
-    };
-
-    log.debug("{}", .{graphics_output.mode});
-
-    var kernel_entry: *const kernel.EntryFn = undefined;
-    status = loadKernel(&kernel_entry);
-    if (status != .Success) return status;
-
-    log.debug("calling kernel entry point", .{});
-    kernel_entry(&.{
-        .graphics = .{
+        break :blk kernel.GraphicsInfo{
             .frame_buffer_base = graphics_output.mode.frame_buffer_base,
             .frame_buffer_size = graphics_output.mode.frame_buffer_size,
             .horizontal_resolution = graphics_output.mode.info.horizontal_resolution,
@@ -52,27 +52,29 @@ pub fn main() uefi.Status {
             .pixel_format = graphics_output.mode.info.pixel_format,
             .pixel_information = graphics_output.mode.info.pixel_information,
             .pixels_per_scan_line = graphics_output.mode.info.pixels_per_scan_line,
-        },
-    });
+        };
+    };
 
-    // TODO: Call exitBootServices and jump to kernel instead of calling entry point:
-    // var zero_size: usize = 0;
-    // var zero_version: u32 = 0;
-    // var map_key: usize = undefined;
-    // _ = boot_services.getMemoryMap(&zero_size, null, &map_key, &zero_size, &zero_version);
-    // _ = boot_services.exitBootServices(uefi.handle, map_key);
-    // log.debug("jumping to kernel entry point", .{});
-    // const kernel_entry = @intToPtr(*fn () callconv(.SysV) noreturn, kernel_entry_address);
-    // asm volatile (
-    //     \\jmpq      *%[destination]
-    //     :
-    //     : [destination] "r" (kernel_entry),
-    // );
-    // unreachable;
+    // TODO: Save memory map and pass to kernel.
+    log.debug("exiting boot services and calling kernel entry point", .{});
+    var map_key: usize = 0;
+    var map_size: usize = 0;
+    var descriptor_size: usize = 0;
+    var descriptor_version: u32 = 0;
+    status = boot_services.getMemoryMap(&map_size, null, &map_key, &descriptor_size, &descriptor_version);
+    status = boot_services.exitBootServices(uefi.handle, map_key);
+    // NOTE: Cannot call logging functions past this point since they rely on `con_out`!
+    //  Could resolve this by making `logToConsole` aware of Boot Services (see the TODO at the function definition).
+
+    // TODO: Maybe jump instead of calling?
+    kernel_entry(&.{
+        .graphics = graphics,
+    });
 }
 
 // TODO: Having this function solves the issue of freeing resources before jumping to the kernel,
 //  but it's basically just `main` but renamed. Ideally, it should be split up more.
+// TODO: This should return an error union.
 fn loadKernel(kernel_entry: **const kernel.EntryFn) uefi.Status {
     _ = uefi.system_table.con_out.?.clearScreen();
 
@@ -206,16 +208,14 @@ fn loadKernel(kernel_entry: **const kernel.EntryFn) uefi.Status {
         log.debug("allocated pages:", .{});
         var page_address_entries = allocated_page_addresses.iterator();
         while (page_address_entries.next()) |entry| {
-            log.debug("    0x{X}: {}x", .{ entry.key_ptr.*, entry.value_ptr.* });
+            log.debug("    0x{X}: {} page(s)", .{ entry.key_ptr.*, entry.value_ptr.* });
         }
     }
 
     log.debug("kernel loaded", .{});
 
     const kernel_entry_address = header.entry;
-    log.debug("kernel entry address: 0x{X}", .{kernel_entry_address});
-
-    kernel_entry.* = @intToPtr(*kernel.EntryFn, kernel_entry_address);
+    kernel_entry.* = @intToPtr(*const kernel.EntryFn, kernel_entry_address);
     return .Success;
 }
 
@@ -223,6 +223,7 @@ pub const std_options = struct {
     pub const logFn = logToConsole;
 };
 
+// TODO: Maybe make this detect if Boot Services are available.
 fn logToConsole(
     comptime level: log.Level,
     comptime scope: @TypeOf(.EnumLiteral),
@@ -239,4 +240,17 @@ fn logToConsole(
     defer uefi.pool_allocator.free(utf16);
 
     _ = uefi.system_table.con_out.?.outputString(utf16);
+}
+
+pub fn panic(message: []const u8, error_return_trace: ?*StackTrace, return_address: ?usize) noreturn {
+    @setCold(true);
+    _ = error_return_trace;
+
+    const first_trace_address = return_address orelse @returnAddress();
+    const writer = serial.writer();
+    writer.print("fatal: {s} at 0x{X}\r\n", .{ message, first_trace_address }) catch unreachable;
+
+    while (true) {
+        asm volatile ("hlt");
+    }
 }
