@@ -19,13 +19,18 @@ pub fn init(framebuffer: Framebuffer) Self {
 
 pub fn writeByte(self: *Self, byte: u8) void {
     switch (byte) {
-        '\n' => {
-            self.x = 0;
+        '\n', '\x0B' => |c| {
             self.y += font.height;
+            if (c == '\n') {
+                self.x = 0;
+            }
         },
         '\r' => {
             self.x = 0;
             return;
+        },
+        '\t' => {
+            self.x += 8 * font.width;
         },
         else => {
             const x_offset = self.x;
