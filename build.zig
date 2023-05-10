@@ -41,10 +41,12 @@ pub fn build(b: *std.Build) void {
 
     const make_hdd_structure_step = b.step("hdd", "Make HDD directory structure");
     const copy_bootloader = b.addInstallFile(bootloader.getOutputSource(), "hdd/EFI/BOOT/bootx64.efi");
-    const copy_bootloader_debug_symbols = b.addInstallFile(bootloader.getOutputPdbSource(), "hdd/EFI/BOOT/bootx64.pdb");
+    if (bootloader.optimize != .ReleaseSmall) {
+        const copy_bootloader_debug_symbols = b.addInstallFile(bootloader.getOutputPdbSource(), "hdd/EFI/BOOT/bootx64.pdb");
+        make_hdd_structure_step.dependOn(&copy_bootloader_debug_symbols.step);
+    }
     const copy_kernel = b.addInstallFile(kernel.getOutputSource(), "hdd/kernel.elf");
     make_hdd_structure_step.dependOn(&copy_bootloader.step);
-    make_hdd_structure_step.dependOn(&copy_bootloader_debug_symbols.step);
     make_hdd_structure_step.dependOn(&copy_kernel.step);
     b.default_step = make_hdd_structure_step;
 
