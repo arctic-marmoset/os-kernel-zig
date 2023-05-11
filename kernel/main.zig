@@ -8,9 +8,8 @@ const log = std.log;
 const kernel = @import("kernel.zig");
 
 const Console = @import("Console.zig");
-const DebugInfo = debug.DebugInfo;
-const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 const Framebuffer = @import("Framebuffer.zig");
+const MemoryDescriptor = std.os.uefi.tables.MemoryDescriptor;
 const StackTrace = std.builtin.StackTrace;
 
 comptime {
@@ -25,6 +24,23 @@ fn init(info: *const kernel.InitInfo) callconv(.SysV) noreturn {
 
     console = Console.init(framebuffer);
     log.info("Hello from Kernel!", .{});
+
+    const descriptor_count = @divExact(info.memory.map_size, info.memory.descriptor_size);
+    for (0..descriptor_count) |i| {
+        const descriptor_bytes = info.memory.buffer[(i * info.memory.descriptor_size)..][0..@sizeOf(MemoryDescriptor)];
+        const descriptor = @ptrCast(
+            *const MemoryDescriptor,
+            @alignCast(
+                @alignOf(MemoryDescriptor),
+                descriptor_bytes.ptr,
+            ),
+        );
+
+        log.debug(
+            "0x{X:0>16}: {} page(s), {s}",
+            .{ descriptor.physical_start, descriptor.number_of_pages, @tagName(descriptor.type) },
+        );
+    }
 
     @panic("not implemented");
 }

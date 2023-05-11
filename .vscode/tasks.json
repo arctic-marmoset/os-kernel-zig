@@ -7,12 +7,14 @@
             "label": "build",
             "type": "shell",
             "command": "zig build test",
-            "dependsOn": "build without tests"
+            "dependsOn": "build without tests",
+            "problemMatcher": "$zig"
         },
         {
             "label": "build without tests",
             "type": "shell",
-            "command": "zig build"
+            "command": "zig build",
+            "problemMatcher": "$zig"
         },
         {
             "label": "launch QEMU",

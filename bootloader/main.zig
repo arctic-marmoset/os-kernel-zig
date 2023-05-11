@@ -4,6 +4,7 @@ const kernel = @import("kernel");
 
 const serial = @import("serial.zig");
 
+const debug = std.debug;
 const elf = std.elf;
 const fmt = std.fmt;
 const log = std.log;
@@ -15,6 +16,7 @@ const AutoHashMap = std.AutoHashMap;
 const FileProtocol = uefi.protocols.FileProtocol;
 const GraphicsOutputProtocol = uefi.protocols.GraphicsOutputProtocol;
 const LoadedImageProtocol = uefi.protocols.LoadedImageProtocol;
+const MemoryDescriptor = uefi.tables.MemoryDescriptor;
 const SimpleFileSystemProtocol = uefi.protocols.SimpleFileSystemProtocol;
 const StackTrace = std.builtin.StackTrace;
 
@@ -55,20 +57,80 @@ pub fn main() uefi.Status {
         };
     };
 
-    // TODO: Save memory map and pass to kernel.
-    log.debug("exiting boot services and calling kernel entry point", .{});
+    log.debug("getting memory map", .{});
+    var buffer: []align(@alignOf(MemoryDescriptor)) u8 = &.{};
     var map_key: usize = 0;
     var map_size: usize = 0;
     var descriptor_size: usize = 0;
     var descriptor_version: u32 = 0;
-    status = boot_services.getMemoryMap(&map_size, null, &map_key, &descriptor_size, &descriptor_version);
-    status = boot_services.exitBootServices(uefi.handle, map_key);
+    const max_attempt_count = 2;
+    for (0..max_attempt_count) |attempt_count| {
+        status = boot_services.getMemoryMap(
+            &map_size,
+            @ptrCast([*]MemoryDescriptor, buffer.ptr),
+            &map_key,
+            &descriptor_size,
+            &descriptor_version,
+        );
+        if (status != .BufferTooSmall) break;
+        log.debug("attempt: {}", .{attempt_count});
+
+        // 1) Add 2 more descriptors because allocating the buffer could cause 1 region to split into 2.
+        // 2) Add a few more descriptors because calling ExitBootServices later can fail with InvalidParameter, which
+        //    indicates that the memory map was modified and GetMemoryMap must be called again. However, Boot Services
+        //    will not be available, so the pool allocator will not exist. So, we have to preemptively allocate extra
+        //    memory here.
+        map_size += descriptor_size * (2 + 6);
+        log.debug("buffer too small - allocating {} Bytes", .{map_size});
+
+        uefi.pool_allocator.free(buffer);
+        buffer = uefi.pool_allocator.alignedAlloc(u8, @alignOf(MemoryDescriptor), map_size) catch |e| {
+            log.err("failed to resize memory map buffer: {}", .{e});
+            return .LoadError;
+        };
+    }
+
+    // FIXME: Can't use errdefer since `main` doesn't return an error union.
+    if (status != .Success) {
+        uefi.pool_allocator.free(buffer);
+        return status;
+    }
+
+    log.debug("memory map key: {}", .{map_key});
+    log.debug("memory map buffer size: {}", .{map_size});
+    log.debug("exiting boot services and calling kernel entry point", .{});
+    while (true) {
+        status = boot_services.exitBootServices(uefi.handle, map_key);
+        if (status != .InvalidParameter) break;
+
+        // If status is InvalidParameter, then we need to update our memory map.
+        map_size = buffer.len;
+        status = boot_services.getMemoryMap(
+            &map_size,
+            @ptrCast([*]MemoryDescriptor, buffer.ptr),
+            &map_key,
+            &descriptor_size,
+            &descriptor_version,
+        );
+        // On error, we can't do any cleanup since Boot Services are no longer available.
+        if (status != .Success) return status;
+    }
+
+    if (status != .Success) {
+        return status;
+    }
+
     // NOTE: Cannot call logging functions past this point since they rely on `con_out`!
     //  Could resolve this by making `logToConsole` aware of Boot Services (see the TODO at the function definition).
 
     // TODO: Maybe jump instead of calling?
     kernel_entry(&.{
         .graphics = graphics,
+        .memory = .{
+            .buffer = buffer,
+            .map_size = map_size,
+            .descriptor_size = descriptor_size,
+        },
     });
 }
 
@@ -97,14 +159,6 @@ fn loadKernel(kernel_entry: **const kernel.EntryFn) uefi.Status {
     };
 
     log.debug("bootloader base address: 0x{X}", .{@ptrToInt(loaded_image.image_base)});
-
-    // if (builtin.mode == .Debug) {
-    //     log.debug("waiting for debugger", .{});
-    //     var waiting = true;
-    //     while (waiting) {
-    //         asm volatile ("hlt");
-    //     }
-    // }
 
     const file_system = blk: {
         var result: *const SimpleFileSystemProtocol = undefined;
