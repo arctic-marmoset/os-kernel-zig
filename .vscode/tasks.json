@@ -6,14 +6,14 @@
         {
             "label": "build",
             "type": "shell",
-            "command": "zig build test",
+            "command": "zig build test -Doptimize=${input:buildProfile}",
             "dependsOn": "build without tests",
             "problemMatcher": "$zig"
         },
         {
             "label": "build without tests",
             "type": "shell",
-            "command": "zig build",
+            "command": "zig build -Doptimize=${input:buildProfile}",
             "problemMatcher": "$zig"
         },
         {
@@ -36,5 +36,19 @@
             ],
             "problemMatcher": []
         }
+    ],
+    "inputs": [
+        {
+            "id": "buildProfile",
+            "description": "Build Profile",
+            "type": "pickString",
+            "options": [
+                "Debug",
+                "ReleaseSafe",
+                "ReleaseFast",
+                "ReleaseSmall"
+            ],
+            "default": "Debug"
+        },
     ]
 }
