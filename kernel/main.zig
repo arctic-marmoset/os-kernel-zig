@@ -1,6 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+const kernel = @import("kernel.zig");
+
 const debug = std.debug;
 const dwarf = std.dwarf;
 const fmt = std.fmt;
@@ -8,13 +10,12 @@ const heap = std.heap;
 const log = std.log;
 const mem = std.mem;
 
-const kernel = @import("kernel.zig");
-
 const Console = @import("Console.zig");
 const DwarfInfo = dwarf.DwarfInfo;
 const FixedBufferAllocator = heap.FixedBufferAllocator;
 const Framebuffer = @import("Framebuffer.zig");
 const MemoryDescriptor = std.os.uefi.tables.MemoryDescriptor;
+const StackIterator = debug.StackIterator;
 const StackTrace = std.builtin.StackTrace;
 
 comptime {
@@ -91,7 +92,7 @@ fn logToConsole(
 }
 
 // FIXME: Hide all this in a struct inside panic().
-var panic_heap: [8 * 1024]u8 = undefined;
+var panic_heap: [64 * 1024]u8 = undefined;
 var panic_fba = FixedBufferAllocator.init(&panic_heap);
 const panic_allocator = panic_fba.allocator();
 
@@ -99,19 +100,40 @@ pub fn panic(message: []const u8, error_return_trace: ?*StackTrace, return_addre
     @setCold(true);
     _ = error_return_trace;
 
-    // TODO: Trace the call stack.
     const first_trace_address = return_address orelse @returnAddress();
     const writer = console.writer();
     writer.print("kernel panic: {s}\n", .{message}) catch unreachable;
     if (debug_info) |*info| {
-        // FIXME: A lot of `catch unreachable` happening here just to get things working.
-        const compile_unit = info.findCompileUnit(first_trace_address) catch unreachable;
-        // The function PC range has been observed to be off by one sometimes, so we check `address - 1` if `address`
-        // doesn't yield anything.
-        const name = info.getSymbolName(first_trace_address) orelse info.getSymbolName(first_trace_address - 1) orelse "???";
-        const line_info = info.getLineNumberInfo(panic_allocator, compile_unit.*, first_trace_address) catch unreachable;
-        writer.print("{s}:{}:{}: 0x{X:0>16} in {s}\n", .{ line_info.file_name, line_info.line, line_info.column, first_trace_address, name }) catch unreachable;
+        // TODO: Maybe use DWARF unwind info for stacktrace.
+        // FIXME: Clean all this up.
+        var call_stack = StackIterator.init(first_trace_address, null);
+        while (call_stack.next()) |address| {
+            const maybe_compile_unit = info.findCompileUnit(address) catch null;
+
+            const opt_line_info = if (maybe_compile_unit) |compile_unit|
+                info.getLineNumberInfo(panic_allocator, compile_unit.*, address) catch null
+            else
+                null;
+
+            if (opt_line_info) |line_info| {
+                writer.print(
+                    "{s}:{}:{}:",
+                    .{ line_info.file_name, line_info.line, line_info.column },
+                ) catch unreachable;
+            } else {
+                writer.writeAll("???:") catch unreachable;
+            }
+
+            // The DWARF function PC range has sometimes been observed to be off by one, so we should also check
+            // `address - 1` if `address` doesn't yield anything.
+            const name = info.getSymbolName(address) orelse
+                info.getSymbolName(address - 1) orelse
+                "???";
+
+            writer.print(" 0x{X:0>16} in {s}\n", .{ address, name }) catch unreachable;
+        }
     } else {
+        // TODO: We can still get a stacktrace if no DWARF info is available.
         writer.print("???: 0x{X:0>16} in ???\n", .{first_trace_address}) catch unreachable;
     }
 
