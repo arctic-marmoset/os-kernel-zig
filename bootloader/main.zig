@@ -2,9 +2,10 @@ const std = @import("std");
 const builtin = @import("builtin");
 const kernel = @import("kernel");
 
+const debug = @import("debug.zig");
 const serial = @import("serial.zig");
 
-const debug = std.debug;
+const dwarf = std.dwarf;
 const elf = std.elf;
 const fmt = std.fmt;
 const log = std.log;
@@ -13,6 +14,7 @@ const uefi = std.os.uefi;
 const unicode = std.unicode;
 
 const AutoHashMap = std.AutoHashMap;
+const DwarfInfo = dwarf.DwarfInfo;
 const FileProtocol = uefi.protocols.FileProtocol;
 const GraphicsOutputProtocol = uefi.protocols.GraphicsOutputProtocol;
 const LoadedImageProtocol = uefi.protocols.LoadedImageProtocol;
@@ -28,7 +30,8 @@ pub fn main() uefi.Status {
     serial.init();
 
     var kernel_entry: *const kernel.EntryFn = undefined;
-    status = loadKernel(&kernel_entry);
+    var debug_info: ?DwarfInfo = null;
+    status = loadKernel(&kernel_entry, &debug_info);
     if (status != .Success) return status;
     log.debug("kernel entry address: 0x{X}", .{@ptrToInt(kernel_entry)});
 
@@ -125,6 +128,7 @@ pub fn main() uefi.Status {
 
     // TODO: Maybe jump instead of calling?
     kernel_entry(&.{
+        .debug = debug_info,
         .graphics = graphics,
         .memory = .{
             .buffer = buffer,
@@ -137,7 +141,7 @@ pub fn main() uefi.Status {
 // TODO: Having this function solves the issue of freeing resources before jumping to the kernel,
 //  but it's basically just `main` but renamed. Ideally, it should be split up more.
 // TODO: This should return an error union.
-fn loadKernel(kernel_entry: **const kernel.EntryFn) uefi.Status {
+fn loadKernel(kernel_entry: **const kernel.EntryFn, debug_info: *?dwarf.DwarfInfo) uefi.Status {
     _ = uefi.system_table.con_out.?.clearScreen();
 
     const boot_services = uefi.system_table.boot_services.?;
@@ -244,6 +248,7 @@ fn loadKernel(kernel_entry: **const kernel.EntryFn) uefi.Status {
 
                 log.debug("allocating {} page(s) starting at address: 0x{X}", .{ page_count, page_address });
                 var page = @intToPtr([*]align(4096) u8, page_address);
+                // TODO: Kernel Address Space Layout Randomisation (KASLR).
                 const status = boot_services.allocatePages(.AllocateAddress, .LoaderData, page_count, &page);
                 if (status != .Success) {
                     log.err("failed to allocate page(s): {}", .{status});
@@ -267,6 +272,11 @@ fn loadKernel(kernel_entry: **const kernel.EntryFn) uefi.Status {
     }
 
     log.debug("kernel loaded", .{});
+
+    debug_info.* = debug.readElfDebugInfo(uefi.pool_allocator, kernel_file) catch |e| blk: {
+        log.warn("failed to read kernel debug info: {}", .{e});
+        break :blk null;
+    };
 
     const kernel_entry_address = header.entry;
     kernel_entry.* = @intToPtr(*const kernel.EntryFn, kernel_entry_address);

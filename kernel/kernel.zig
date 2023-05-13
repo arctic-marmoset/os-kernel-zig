@@ -1,7 +1,9 @@
 const std = @import("std");
 
+const dwarf = std.dwarf;
 const uefi = std.os.uefi;
 
+const DwarfInfo = dwarf.DwarfInfo;
 const GraphicsPixelFormat = uefi.protocols.GraphicsPixelFormat;
 const MemoryDescriptor = uefi.tables.MemoryDescriptor;
 const PixelBitmask = uefi.protocols.PixelBitmask;
@@ -9,6 +11,7 @@ const PixelBitmask = uefi.protocols.PixelBitmask;
 pub const EntryFn = fn (info: *const InitInfo) callconv(.SysV) noreturn;
 
 pub const InitInfo = struct {
+    debug: ?DwarfInfo,
     graphics: GraphicsInfo,
     memory: MemoryInfo,
 };
