@@ -73,7 +73,7 @@ fn init(info: *const kernel.InitInfo) callconv(.SysV) noreturn {
 }
 
 fn declareEntryFunction(comptime function: kernel.EntryFn) void {
-    @export(function, .{ .name = "kernel_init" });
+    @export(function, .{ .name = config.kernel_entry_name });
 }
 
 pub const std_options = struct {

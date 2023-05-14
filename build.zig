@@ -25,7 +25,9 @@ pub fn build(b: *std.Build) !void {
     const install_ovmf_vars = b.addInstallFile(.{ .path = "vendor/edk2-ovmf/x64/OVMF_VARS.fd" }, "OVMF_VARS.fd");
     bootloader.step.dependOn(&install_ovmf_vars.step);
 
+    const kernel_entry_name = "kernel_init";
     const kernel_config = b.addOptions();
+    kernel_config.addOption([:0]const u8, "kernel_entry_name", kernel_entry_name);
     kernel_config.addOption([:0]const u8, "project_root_path", try b.allocator.dupeZ(u8, b.pathFromRoot("")));
     const kernel = b.addExecutable(.{
         .name = "kernel",
@@ -38,7 +40,7 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
     kernel.emit_asm = .emit;
-    kernel.entry_symbol_name = "kernel_init";
+    kernel.entry_symbol_name = kernel_entry_name;
     kernel.red_zone = false;
     kernel.addOptions("config", kernel_config);
 
