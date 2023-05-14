@@ -19,11 +19,11 @@ pub const InitInfo = struct {
 pub const GraphicsInfo = struct {
     frame_buffer_base: u64,
     frame_buffer_size: usize,
-    horizontal_resolution: u32 = undefined,
-    vertical_resolution: u32 = undefined,
-    pixel_format: GraphicsPixelFormat = undefined,
-    pixel_information: PixelBitmask = undefined,
-    pixels_per_scan_line: u32 = undefined,
+    horizontal_resolution: u32,
+    vertical_resolution: u32,
+    pixel_format: GraphicsPixelFormat,
+    pixel_information: PixelBitmask,
+    pixels_per_scan_line: u32,
 };
 
 pub const MemoryInfo = struct {
