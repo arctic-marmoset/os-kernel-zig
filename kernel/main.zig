@@ -35,7 +35,8 @@ fn init(info: *const kernel.InitInfo) callconv(.SysV) noreturn {
     console = Console.init(framebuffer);
     log.info("Hello from Kernel!", .{});
 
-    var memory_page_count: usize = 0;
+    var used_memory_page_count: usize = 0;
+    var unused_memory_page_count: usize = 0;
     const descriptor_count = @divExact(info.memory.map_size, info.memory.descriptor_size);
     for (0..descriptor_count) |i| {
         const descriptor_bytes = info.memory.buffer[(i * info.memory.descriptor_size)..][0..@sizeOf(MemoryDescriptor)];
@@ -52,12 +53,13 @@ fn init(info: *const kernel.InitInfo) callconv(.SysV) noreturn {
             .LoaderData,
             .BootServicesCode,
             .BootServicesData,
-            .ConventionalMemory,
-            .PersistentMemory,
             .RuntimeServicesCode,
             .RuntimeServicesData,
             .ACPIReclaimMemory,
-            => memory_page_count += descriptor.number_of_pages,
+            => used_memory_page_count += descriptor.number_of_pages,
+            .ConventionalMemory,
+            .PersistentMemory,
+            => unused_memory_page_count += descriptor.number_of_pages,
             else => {},
         }
 
@@ -66,8 +68,14 @@ fn init(info: *const kernel.InitInfo) callconv(.SysV) noreturn {
             .{ descriptor.physical_start, descriptor.number_of_pages, @tagName(descriptor.type) },
         );
     }
-
-    log.debug("total memory: {} MiB", .{memory_page_count * std.mem.page_size / 1024 / 1024});
+    const total_memory_page_count = used_memory_page_count + unused_memory_page_count;
+    log.debug(
+        "memory: {} MiB used | {} MiB total",
+        .{
+            used_memory_page_count * std.mem.page_size / 1024 / 1024,
+            total_memory_page_count * std.mem.page_size / 1024 / 1024,
+        },
+    );
 
     @panic("not implemented");
 }
