@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub fn build(b: *std.Build) void {
+pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
 
     const optimize = b.standardOptimizeOption(.{});
@@ -25,6 +25,8 @@ pub fn build(b: *std.Build) void {
     const install_ovmf_vars = b.addInstallFile(.{ .path = "vendor/edk2-ovmf/x64/OVMF_VARS.fd" }, "OVMF_VARS.fd");
     bootloader.step.dependOn(&install_ovmf_vars.step);
 
+    const kernel_config = b.addOptions();
+    kernel_config.addOption([:0]const u8, "project_root_path", try b.allocator.dupeZ(u8, b.pathFromRoot("")));
     const kernel = b.addExecutable(.{
         .name = "kernel",
         .root_source_file = .{ .path = "kernel/main.zig" },
@@ -38,6 +40,7 @@ pub fn build(b: *std.Build) void {
     kernel.emit_asm = .emit;
     kernel.entry_symbol_name = "kernel_init";
     kernel.red_zone = false;
+    kernel.addOptions("config", kernel_config);
 
     const make_hdd_structure_step = b.step("hdd", "Make HDD directory structure");
     const copy_bootloader = b.addInstallFile(bootloader.getOutputSource(), "hdd/EFI/BOOT/bootx64.efi");
