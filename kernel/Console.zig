@@ -57,13 +57,7 @@ pub fn writeByte(self: *Self, byte: u8) void {
 
     if (self.y + font.height > self.framebuffer.height) {
         self.y = 0;
-        self.framebuffer.fillColor(.{
-            .x = 0,
-            .y = 0,
-            .width = self.framebuffer.width,
-            .height = self.framebuffer.height,
-            .color = 0xFF000000,
-        });
+        self.framebuffer.clear(0xFF000000);
     }
 }
 
