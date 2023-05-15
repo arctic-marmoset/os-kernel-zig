@@ -31,8 +31,8 @@
                 "if=pflash,format=raw,readonly=on,file=vendor/edk2-ovmf/x64/OVMF_CODE.fd",
                 "-drive",
                 "if=pflash,format=raw,file=zig-out/OVMF_VARS.fd",
-                "-hdd",
-                "fat:rw:zig-out/hdd"
+                "-drive",
+                "format=raw,file=fat:rw:zig-out/hdd"
             ],
             "problemMatcher": []
         }
