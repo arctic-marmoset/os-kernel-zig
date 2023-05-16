@@ -90,7 +90,7 @@ pub const std_options = struct {
 
 fn logToConsole(
     comptime level: log.Level,
-    comptime scope: @TypeOf(.EnumLiteral),
+    comptime scope: @TypeOf(.enum_literal),
     comptime format: []const u8,
     args: anytype,
 ) void {

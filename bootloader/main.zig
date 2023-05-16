@@ -290,7 +290,7 @@ pub const std_options = struct {
 // TODO: Maybe make this detect if Boot Services are available.
 fn logToConsole(
     comptime level: log.Level,
-    comptime scope: @TypeOf(.EnumLiteral),
+    comptime scope: @TypeOf(.enum_literal),
     comptime format: []const u8,
     args: anytype,
 ) void {
