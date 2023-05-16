@@ -1,4 +1,7 @@
 const std = @import("std");
+const builtin = @import("builtin");
+
+const path = std.fs.path;
 
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
@@ -29,6 +32,7 @@ pub fn build(b: *std.Build) !void {
     const kernel_config = b.addOptions();
     kernel_config.addOption([:0]const u8, "kernel_entry_name", kernel_entry_name);
     kernel_config.addOption([:0]const u8, "project_root_path", try b.allocator.dupeZ(u8, b.pathFromRoot("")));
+    kernel_config.addOption([:0]const u8, "zig_lib_prefix", "zig" ++ path.sep_str ++ "lib" ++ path.sep_str ++ "std");
     const kernel = b.addExecutable(.{
         .name = "kernel",
         .root_source_file = .{ .path = "kernel/main.zig" },
