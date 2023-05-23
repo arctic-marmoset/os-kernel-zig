@@ -104,8 +104,6 @@ pub fn panic(message: []const u8, error_return_trace: ?*StackTrace, return_addre
 
     // TODO: Clean all this up.
     // FIXME: `catch unreachable` everywhere.
-    // FIXME: DWARF unwind path skips last RA because we're printing PC.
-    // FIXME: Naive StackIterator path skips current PC because we pass it `first_trace_address`.
     writer.print("stacktrace:\n", .{}) catch unreachable;
     if (debug_info) |*info| {
         // TODO: Encapsulate CIE, `init_instructions`, FDE, etc. in `unwind`.
@@ -132,7 +130,9 @@ pub fn panic(message: []const u8, error_return_trace: ?*StackTrace, return_addre
 
         var pc = ip.*;
         while (getReturnAddress(entries.items, pc, &registers) catch unreachable) |ra| : (pc = ra) {
-            const call_address = pc - 1;
+            // We don't actually care about printing the current PC here; we're obviously in the panic handler. Just
+            // start from the RA.
+            const call_address = ra - 1;
 
             // TODO: Maybe embed source files for pretty-printed traces.
             const maybe_compile_unit = info.findCompileUnit(call_address) catch null;
@@ -151,15 +151,12 @@ pub fn panic(message: []const u8, error_return_trace: ?*StackTrace, return_addre
                 else
                     line_info.file_name;
 
-                writer.print(
-                    "{s}:{}:{}:",
-                    .{ source_location, line_info.line, line_info.column },
-                ) catch unreachable;
+                writer.print("{s}:{}:{}:", .{ source_location, line_info.line, line_info.column }) catch unreachable;
             } else {
                 writer.writeAll("???:") catch unreachable;
             }
 
-            const name = debug_info.?.getSymbolName(call_address) orelse "???";
+            const name = info.getSymbolName(call_address) orelse "???";
             writer.print(" 0x{X:0>16} in {s}\n", .{ call_address, name }) catch unreachable;
         }
     } else {
