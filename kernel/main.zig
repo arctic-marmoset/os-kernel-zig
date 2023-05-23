@@ -2,8 +2,10 @@ const std = @import("std");
 const builtin = @import("builtin");
 const config = @import("config");
 
+const arch = @import("arch.zig");
 const kernel = @import("kernel.zig");
 const pmm = @import("pmm.zig");
+const unwind = @import("unwind.zig");
 
 const debug = std.debug;
 const dwarf = std.dwarf;
@@ -67,32 +69,72 @@ pub fn panic(message: []const u8, error_return_trace: ?*StackTrace, return_addre
     _ = error_return_trace;
 
     const PanicContext = struct {
-        var buffer: [64 * 1024]u8 = undefined;
+        var buffer: [2 * 1024 * 1024]u8 = undefined;
         var fba = FixedBufferAllocator.init(&buffer);
         var allocator = fba.allocator();
     };
 
-    // TODO: Dump processor context (CPU ID, registers).
+    // TODO: This doesn't preserve the registers at the panic site.
+    var registers: [unwind.CfiRow.column_count]u64 = undefined;
+    inline for (0..unwind.register_count) |i| {
+        const register = @intToEnum(arch.Register, i);
+        const value = arch.getRegister(register);
+        registers[i] = value;
+    }
+
+    const ip = &registers[unwind.CfiRow.column_count - 1];
+    ip.* = arch.getInstructionPointer();
 
     const first_trace_address = return_address orelse @returnAddress();
+
     const writer = console.writer();
     writer.print("kernel panic: {s}\n", .{message}) catch unreachable;
     writer.print("panic handler has debug info: {}\n", .{debug_info != null}) catch unreachable;
 
-    // TODO: Maybe use DWARF unwind info for stacktrace.
-    // FIXME: This sometimes skips `first_trace_address`.
-    // TODO: We have to subtract 1 from `stack_return_address` to get the address of last byte of previous instruction,
-    //  which we assume is the call address. Should decide whether to print this address or return address.
+    var i: u8 = 0;
+    var it = mem.window(u64, &registers, 4, 4);
+    while (it.next()) |window| {
+        for (window) |value| {
+            const register = @intToEnum(arch.Register, i);
+            writer.print("{s: <3}={X:0>16} ", .{ @tagName(register), value }) catch unreachable;
+            i += 1;
+        }
+        writer.writeByte('\n') catch unreachable;
+    }
+
+    // TODO: Clean all this up.
+    // FIXME: `catch unreachable` everywhere.
+    // FIXME: DWARF unwind path skips last RA because we're printing PC.
+    // FIXME: Naive StackIterator path skips current PC because we pass it `first_trace_address`.
     writer.print("stacktrace:\n", .{}) catch unreachable;
-    var call_stack = StackIterator.init(first_trace_address, null);
-    while (call_stack.next()) |stack_return_address| {
-        if (stack_return_address == 0) continue;
+    if (debug_info) |*info| {
+        // TODO: Encapsulate CIE, `init_instructions`, FDE, etc. in `unwind`.
+        var stream = std.io.fixedBufferStream(info.debug_frame.?);
+        const cie_header_offset = 0;
+        const cie_header = unwind.CieHeader.parse(PanicContext.allocator, &stream) catch unreachable;
+        defer cie_header.deinit(PanicContext.allocator);
+        var init_instructions = std.ArrayList(unwind.Instruction).init(PanicContext.allocator);
+        defer init_instructions.deinit();
+        unwind.decodeInstructions(&stream, cie_header_offset, cie_header, cie_header.sizeInFile(), &init_instructions) catch unreachable;
+        const first_row_template: unwind.CfiRow = blk: {
+            var row: unwind.CfiRow = .{ .location = undefined, .cfa = undefined };
+            unwind.executeAllInstructionsForRow(init_instructions.items, undefined, &row) catch unreachable;
+            break :blk row;
+        };
 
-        const call_address = stack_return_address - 1;
+        var entries = std.ArrayList(unwind.Fde).init(PanicContext.allocator);
+        defer entries.deinit();
+        while (stream.getPos() catch unreachable < stream.getEndPos() catch unreachable) {
+            const fde = unwind.Fde.parse(PanicContext.allocator, &stream, cie_header, first_row_template) catch unreachable;
+            entries.append(fde) catch unreachable;
+        }
+        std.sort.sort(unwind.Fde, entries.items, {}, unwind.Fde.addressLessThan);
 
-        if (debug_info) |*info| {
+        var pc = ip.*;
+        while (getReturnAddress(entries.items, pc, &registers) catch unreachable) |ra| : (pc = ra) {
+            const call_address = pc - 1;
+
             // TODO: Maybe embed source files for pretty-printed traces.
-            // FIXME: Clean all this up.
             const maybe_compile_unit = info.findCompileUnit(call_address) catch null;
 
             const maybe_line_info = if (maybe_compile_unit) |compile_unit|
@@ -117,9 +159,13 @@ pub fn panic(message: []const u8, error_return_trace: ?*StackTrace, return_addre
                 writer.writeAll("???:") catch unreachable;
             }
 
-            const name = info.getSymbolName(call_address) orelse "???";
-            writer.print(" 0x{X:0>16} in {s}\n", .{ stack_return_address, name }) catch unreachable;
-        } else {
+            const name = debug_info.?.getSymbolName(call_address) orelse "???";
+            writer.print(" 0x{X:0>16} in {s}\n", .{ call_address, name }) catch unreachable;
+        }
+    } else {
+        var call_stack = StackIterator.init(first_trace_address, null);
+        while (call_stack.next()) |stack_return_address| {
+            if (stack_return_address == 0) continue;
             writer.print("???: 0x{X:0>16} in ???\n", .{stack_return_address}) catch unreachable;
         }
     }
@@ -127,4 +173,57 @@ pub fn panic(message: []const u8, error_return_trace: ?*StackTrace, return_addre
     while (true) {
         asm volatile ("hlt");
     }
+}
+
+// TODO: Move this somewhere appropriate.
+fn getReturnAddress(
+    entries: []const unwind.Fde,
+    pc: u64,
+    registers: []u64,
+) !?u64 {
+    const entry = blk: {
+        for (entries) |entry| {
+            if (pc >= entry.header.location_begin and pc <= entry.header.location_end) {
+                break :blk entry;
+            }
+        }
+        return null;
+    };
+
+    const row = blk: {
+        var previous_row: unwind.CfiRow = undefined;
+        for (entry.table.items) |row| {
+            if (pc < row.location) {
+                break;
+            }
+            previous_row = row;
+        }
+        break :blk previous_row;
+    };
+
+    const frame_address = registers[row.cfa.register] + row.cfa.offset;
+
+    const fp_rule = row.registers[unwind.CfiRow.fp_index];
+    switch (fp_rule) {
+        .undefined => {},
+        .offset => |amount| {
+            const fp_address = if (amount < 0)
+                frame_address - @intCast(u64, -fp_rule.offset)
+            else
+                frame_address + @intCast(u64, fp_rule.offset);
+            const fp = mem.readIntLittle(u64, @intToPtr(*const [8]u8, fp_address));
+            registers[unwind.CfiRow.fp_index] = fp;
+        },
+    }
+
+    const ra_rule = row.registers[unwind.CfiRow.ra_index];
+    const ra_address = if (ra_rule.offset < 0)
+        frame_address - @intCast(u64, -ra_rule.offset)
+    else
+        frame_address + @intCast(u64, ra_rule.offset);
+    const ra = mem.readIntLittle(u64, @intToPtr(*const [8]u8, ra_address));
+
+    registers[unwind.CfiRow.sp_index] = frame_address;
+
+    return ra;
 }
