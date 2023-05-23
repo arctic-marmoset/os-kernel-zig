@@ -6,14 +6,14 @@
         {
             "label": "build",
             "type": "shell",
-            "command": "zig build test -Doptimize=${input:buildProfile}",
+            "command": "zig build test -freference-trace -Doptimize=${input:buildProfile}",
             "dependsOn": "build without tests",
             "problemMatcher": "$zig"
         },
         {
             "label": "build without tests",
             "type": "shell",
-            "command": "zig build -Doptimize=${input:buildProfile}",
+            "command": "zig build -freference-trace -Doptimize=${input:buildProfile}",
             "problemMatcher": "$zig"
         },
         {
