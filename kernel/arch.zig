@@ -1,6 +1,5 @@
 const std = @import("std");
 
-// FIXME: rip is not a GPR. It should not be an option for `getRegister()`.
 pub const Register = enum(u8) {
     rsi,
     rdi,
@@ -18,7 +17,6 @@ pub const Register = enum(u8) {
     r13,
     r14,
     r15,
-    rip,
 };
 
 pub inline fn getRegister(register: Register) u64 {
@@ -71,7 +69,6 @@ pub inline fn getRegister(register: Register) u64 {
         .r15 => return asm (""
             : [result] "={r15}" (-> u64),
         ),
-        else => unreachable,
     }
 }
 

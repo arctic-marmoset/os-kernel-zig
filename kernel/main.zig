@@ -64,6 +64,7 @@ fn logToConsole(
     console.writer().print(level_string ++ prefix ++ format ++ "\n", args) catch unreachable;
 }
 
+// TODO: Handle panic during panic.
 pub fn panic(message: []const u8, error_return_trace: ?*StackTrace, return_address: ?usize) noreturn {
     @setCold(true);
     _ = error_return_trace;
@@ -74,22 +75,19 @@ pub fn panic(message: []const u8, error_return_trace: ?*StackTrace, return_addre
         var allocator = fba.allocator();
     };
 
-    // TODO: This doesn't preserve the registers at the panic site.
-    var registers: [unwind.CfiRow.column_count]u64 = undefined;
-    inline for (0..unwind.register_count) |i| {
-        const register = @intToEnum(arch.Register, i);
-        const value = arch.getRegister(register);
-        registers[i] = value;
-    }
-
-    const ip = &registers[unwind.CfiRow.column_count - 1];
-    ip.* = arch.getInstructionPointer();
-
-    const first_trace_address = return_address orelse @returnAddress();
+    // TODO: This doesn't preserve the register values at the panic site.
+    var registers = blk: {
+        var result: [unwind.register_count]u64 = undefined;
+        inline for (0..result.len) |i| {
+            const register = @intToEnum(arch.Register, i);
+            const value = arch.getRegister(register);
+            result[i] = value;
+        }
+        break :blk result;
+    };
 
     const writer = console.writer();
     writer.print("kernel panic: {s}\n", .{message}) catch unreachable;
-    writer.print("panic handler has debug info: {}\n", .{debug_info != null}) catch unreachable;
 
     var i: u8 = 0;
     var it = mem.window(u64, &registers, 4, 4);
@@ -104,10 +102,13 @@ pub fn panic(message: []const u8, error_return_trace: ?*StackTrace, return_addre
 
     // TODO: Clean all this up.
     // FIXME: `catch unreachable` everywhere.
+    const first_trace_address = return_address orelse @returnAddress();
+    writer.print("panic handler has debug info: {}\n", .{debug_info != null}) catch unreachable;
     writer.print("stacktrace:\n", .{}) catch unreachable;
     if (debug_info) |*info| {
         // TODO: Encapsulate CIE, `init_instructions`, FDE, etc. in `unwind`.
-        var stream = std.io.fixedBufferStream(info.debug_frame.?);
+        const debug_frame = info.debug_frame.?;
+        var stream = std.io.fixedBufferStream(debug_frame);
         const cie_header_offset = 0;
         const cie_header = unwind.CieHeader.parse(PanicContext.allocator, &stream) catch unreachable;
         defer cie_header.deinit(PanicContext.allocator);
@@ -128,7 +129,7 @@ pub fn panic(message: []const u8, error_return_trace: ?*StackTrace, return_addre
         }
         std.sort.sort(unwind.Fde, entries.items, {}, unwind.Fde.addressLessThan);
 
-        var pc = ip.*;
+        var pc = arch.getInstructionPointer();
         while (getReturnAddress(entries.items, pc, &registers) catch unreachable) |ra| : (pc = ra) {
             // We don't actually care about printing the current PC here; we're obviously in the panic handler. Just
             // start from the RA.
