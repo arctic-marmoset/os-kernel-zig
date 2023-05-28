@@ -64,7 +64,8 @@ fn logToConsole(
     console.writer().print(level_string ++ prefix ++ format ++ "\n", args) catch unreachable;
 }
 
-// TODO: Handle panic during panic.
+// TODO: Handle panic during panic. See `std.debug` `panicImpl()`, `panicking`, `panic_stage`,
+// `waitForOtherThreadToFinishPanicking()`, etc.
 pub fn panic(message: []const u8, error_return_trace: ?*StackTrace, return_address: ?usize) noreturn {
     @setCold(true);
     _ = error_return_trace;
@@ -127,7 +128,7 @@ pub fn panic(message: []const u8, error_return_trace: ?*StackTrace, return_addre
             const fde = unwind.Fde.parse(PanicContext.allocator, &stream, cie_header, first_row_template) catch unreachable;
             entries.append(fde) catch unreachable;
         }
-        std.sort.sort(unwind.Fde, entries.items, {}, unwind.Fde.addressLessThan);
+        mem.sortUnstable(unwind.Fde, entries.items, {}, unwind.Fde.addressLessThan);
 
         var pc = arch.getInstructionPointer();
         while (getReturnAddress(entries.items, pc, &registers) catch unreachable) |ra| : (pc = ra) {
