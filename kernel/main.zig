@@ -34,6 +34,7 @@ fn init(info: *const kernel.InitInfo) callconv(.SysV) noreturn {
     debug_info = info.debug;
     const framebuffer = Framebuffer.init(info.graphics);
 
+    framebuffer.clear(0x00000000);
     console = Console.init(framebuffer);
     log.debug("framebuffer initialised", .{});
 
