@@ -18,6 +18,11 @@ pub fn init(framebuffer: Framebuffer) Self {
 }
 
 pub fn writeByte(self: *Self, byte: u8) void {
+    if (self.y + font.height > self.framebuffer.height) {
+        self.y = 0;
+        self.framebuffer.clear(0xFF000000);
+    }
+
     switch (byte) {
         '\n', '\x0B' => |c| {
             self.y += font.height;
@@ -53,11 +58,6 @@ pub fn writeByte(self: *Self, byte: u8) void {
     if (self.x + font.width > self.framebuffer.width) {
         self.x = 0;
         self.y += font.height;
-    }
-
-    if (self.y + font.height > self.framebuffer.height) {
-        self.y = 0;
-        self.framebuffer.clear(0xFF000000);
     }
 }
 
