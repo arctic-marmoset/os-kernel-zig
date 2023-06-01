@@ -65,8 +65,10 @@ pub fn init(info: kernel.MemoryInfo) !void {
     return error.NotImplemented;
 }
 
+/// Does not reclaim `LoaderData` since that indicates kernel data.
 fn reclaimMemoryIfPossible(descriptor: *MemoryDescriptor) void {
     switch (descriptor.type) {
+        .LoaderCode,
         .BootServicesCode,
         .BootServicesData,
         => descriptor.type = .ConventionalMemory,
@@ -80,7 +82,6 @@ const DescriptorSortContext = struct {
     pub fn lessThan(self: DescriptorSortContext, lhs_index: usize, rhs_index: usize) bool {
         const lhs = self.descriptors.at(lhs_index);
         const rhs = self.descriptors.at(rhs_index);
-
         return lhs.physical_start < rhs.physical_start;
     }
 
@@ -148,8 +149,7 @@ const DescriptorList = struct {
         }
 
         for (index..(self.len() - 1)) |i| {
-            const descriptor = self.at(i);
-            descriptor.* = self.at(i + 1).*;
+            self.at(i).* = self.at(i + 1).*;
         }
 
         self.bytes.len = newlen;
