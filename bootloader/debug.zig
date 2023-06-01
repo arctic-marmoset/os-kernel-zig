@@ -8,6 +8,7 @@ const mem = std.mem;
 const Allocator = mem.Allocator;
 const DwarfInfo = dwarf.DwarfInfo;
 
+// TODO: Reduce alloc fragmentation.
 pub fn readElfDebugInfo(allocator: Allocator, source: anytype) !DwarfInfo {
     nosuspend {
         try source.seekableStream().seekTo(0);

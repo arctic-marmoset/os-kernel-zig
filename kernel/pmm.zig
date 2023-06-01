@@ -5,6 +5,7 @@ const kernel = @import("kernel.zig");
 const fmt = std.fmt;
 const log = std.log.scoped(.pmm);
 const mem = std.mem;
+const meta = std.meta;
 const sort = std.sort;
 
 const MemoryDescriptor = std.os.uefi.tables.MemoryDescriptor;
@@ -19,18 +20,21 @@ pub fn init(info: kernel.MemoryInfo) !void {
 
     var used_memory_page_count: usize = 0;
     var unused_memory_page_count: usize = 0;
+
     var it = descriptors.iterator();
     while (it.next()) |descriptor| {
         reclaimMemoryIfPossible(descriptor);
 
         while (it.peek()) |next| {
             reclaimMemoryIfPossible(next);
-            if (next.type == descriptor.type) {
-                descriptor.number_of_pages += next.number_of_pages;
-                descriptors.orderedRemove(it.index);
-            } else {
+            if (next.type != descriptor.type or
+                !meta.eql(next.attribute, descriptor.attribute))
+            {
                 break;
             }
+
+            descriptor.number_of_pages += next.number_of_pages;
+            descriptors.orderedRemove(it.index);
         }
 
         switch (descriptor.type) {
@@ -48,19 +52,34 @@ pub fn init(info: kernel.MemoryInfo) !void {
             else => {},
         }
 
-        log.debug(
-            "0x{X:0>16}: {} page(s), {s}",
-            .{ descriptor.physical_start, descriptor.number_of_pages, @tagName(descriptor.type) },
-        );
+        const physical_end = descriptor.physical_start + (descriptor.number_of_pages * mem.page_size);
+        log.debug("{X:0>16}-{X:0>16} ({} page(s)): {s}", .{
+            descriptor.physical_start,
+            physical_end,
+            descriptor.number_of_pages,
+            @tagName(descriptor.type),
+        });
     }
+
     const total_memory_page_count = used_memory_page_count + unused_memory_page_count;
-    log.debug(
-        "memory: {:.2} used | {:.2} total",
-        .{
-            fmt.fmtIntSizeBin(used_memory_page_count * std.mem.page_size),
-            fmt.fmtIntSizeBin(total_memory_page_count * std.mem.page_size),
-        },
-    );
+    log.debug("memory: {:.2} used | {:.2} total", .{
+        fmt.fmtIntSizeBin(used_memory_page_count * mem.page_size),
+        fmt.fmtIntSizeBin(total_memory_page_count * mem.page_size),
+    });
+
+    const begin_address: usize = blk: {
+        const descriptor = descriptors.at(0);
+        break :blk descriptor.physical_start;
+    };
+
+    const end_address: usize = blk: {
+        const descriptor = descriptors.at(descriptors.len() - 1);
+        const size = descriptor.number_of_pages * mem.page_size;
+        const end = descriptor.physical_start + size;
+        break :blk end;
+    };
+
+    log.debug("physical address range: {X:0>16}-{X:0>16}", .{ begin_address, end_address });
 
     return error.NotImplemented;
 }
