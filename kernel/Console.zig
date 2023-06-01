@@ -3,6 +3,8 @@ const std = @import("std");
 const font = @import("font.zig");
 
 const io = std.io;
+const math = std.math;
+const mem = std.mem;
 
 const StaticBitSet = std.StaticBitSet;
 const Framebuffer = @import("Framebuffer.zig");
@@ -18,11 +20,6 @@ pub fn init(framebuffer: Framebuffer) Self {
 }
 
 pub fn writeByte(self: *Self, byte: u8) void {
-    if (self.y + font.height > self.framebuffer.height) {
-        self.y = 0;
-        self.framebuffer.clear(0xFF000000);
-    }
-
     switch (byte) {
         '\n', '\x0B' => |c| {
             self.y += font.height;
@@ -59,6 +56,10 @@ pub fn writeByte(self: *Self, byte: u8) void {
         self.x = 0;
         self.y += font.height;
     }
+
+    if (self.y + font.height > self.framebuffer.height) {
+        self.scrollLine();
+    }
 }
 
 pub fn write(self: *Self, bytes: []const u8) WriteError!usize {
@@ -72,6 +73,17 @@ pub fn write(self: *Self, bytes: []const u8) WriteError!usize {
 pub fn resetCursor(self: *Self) void {
     self.x = 0;
     self.y = 0;
+}
+
+// TODO: Arbitrary scroll amount.
+fn scrollLine(self: *Self) void {
+    const history = self.framebuffer.verticalRegion(font.height, self.y);
+    const destination = self.framebuffer.verticalRegion(0, self.y - font.height);
+    mem.copyForwards(u32, destination, history);
+
+    self.y -= font.height;
+    const line = self.framebuffer.verticalRegion(self.y, self.y + font.height);
+    @memset(line, 0x00000000);
 }
 
 pub const Writer = io.Writer(*Self, WriteError, write);
