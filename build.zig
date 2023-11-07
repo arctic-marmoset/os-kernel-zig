@@ -22,7 +22,6 @@ pub fn build(b: *std.Build) !void {
         },
         .optimize = optimize,
     });
-    bootloader.emit_asm = .emit;
     bootloader.addModule("kernel", kernel_interface);
 
     const install_ovmf_vars = b.addInstallFile(.{ .path = "vendor/edk2-ovmf/x64/OVMF_VARS.fd" }, "OVMF_VARS.fd");
@@ -43,7 +42,6 @@ pub fn build(b: *std.Build) !void {
         },
         .optimize = optimize,
     });
-    kernel.emit_asm = .emit;
     kernel.entry_symbol_name = kernel_entry_name;
     kernel.red_zone = false;
     kernel.addOptions("config", kernel_config);

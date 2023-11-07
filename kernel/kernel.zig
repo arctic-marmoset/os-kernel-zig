@@ -4,9 +4,9 @@ const dwarf = std.dwarf;
 const uefi = std.os.uefi;
 
 const DwarfInfo = dwarf.DwarfInfo;
-const GraphicsPixelFormat = uefi.protocols.GraphicsPixelFormat;
+const GraphicsPixelFormat = uefi.protocol.GraphicsOutput.PixelFormat;
 const MemoryDescriptor = uefi.tables.MemoryDescriptor;
-const PixelBitmask = uefi.protocols.PixelBitmask;
+const PixelBitmask = uefi.protocol.GraphicsOutput.PixelBitmask;
 
 pub const EntryFn = fn (info: *const InitInfo) callconv(.SysV) noreturn;
 

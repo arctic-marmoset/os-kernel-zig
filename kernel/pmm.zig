@@ -67,20 +67,6 @@ pub fn init(info: kernel.MemoryInfo) !void {
         fmt.fmtIntSizeBin(total_memory_page_count * mem.page_size),
     });
 
-    const begin_address: usize = blk: {
-        const descriptor = descriptors.at(0);
-        break :blk descriptor.physical_start;
-    };
-
-    const end_address: usize = blk: {
-        const descriptor = descriptors.at(descriptors.len() - 1);
-        const size = descriptor.number_of_pages * mem.page_size;
-        const end = descriptor.physical_start + size;
-        break :blk end;
-    };
-
-    log.debug("physical address range: {X:0>16}-{X:0>16}", .{ begin_address, end_address });
-
     return error.NotImplemented;
 }
 
@@ -125,13 +111,7 @@ const DescriptorList = struct {
 
     pub fn at(self: DescriptorList, index: usize) *MemoryDescriptor {
         const descriptor_bytes = self.bytes[self.offsetOf(index)..][0..@sizeOf(MemoryDescriptor)];
-        return @ptrCast(
-            *MemoryDescriptor,
-            @alignCast(
-                @alignOf(MemoryDescriptor),
-                descriptor_bytes.ptr,
-            ),
-        );
+        return @ptrCast(@alignCast(descriptor_bytes.ptr));
     }
 
     const Iterator = struct {

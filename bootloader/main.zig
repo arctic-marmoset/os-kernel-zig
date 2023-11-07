@@ -15,11 +15,11 @@ const unicode = std.unicode;
 
 const AutoHashMap = std.AutoHashMap;
 const DwarfInfo = dwarf.DwarfInfo;
-const FileProtocol = uefi.protocols.FileProtocol;
-const GraphicsOutputProtocol = uefi.protocols.GraphicsOutputProtocol;
-const LoadedImageProtocol = uefi.protocols.LoadedImageProtocol;
+const File = uefi.protocol.File;
+const GraphicsOutput = uefi.protocol.GraphicsOutput;
+const LoadedImage = uefi.protocol.LoadedImage;
 const MemoryDescriptor = uefi.tables.MemoryDescriptor;
-const SimpleFileSystemProtocol = uefi.protocols.SimpleFileSystemProtocol;
+const SimpleFileSystem = uefi.protocol.SimpleFileSystem;
 const StackTrace = std.builtin.StackTrace;
 
 const L = unicode.utf8ToUtf16LeStringLiteral;
@@ -33,16 +33,16 @@ pub fn main() uefi.Status {
     var debug_info: ?DwarfInfo = null;
     status = loadKernel(&kernel_entry, &debug_info);
     if (status != .Success) return status;
-    log.debug("kernel entry address: 0x{X}", .{@ptrToInt(kernel_entry)});
+    log.debug("kernel entry address: 0x{X}", .{@intFromPtr(kernel_entry)});
 
     const boot_services = uefi.system_table.boot_services.?;
     const graphics = blk: {
-        var graphics_output: *const GraphicsOutputProtocol = undefined;
+        var graphics_output: *const GraphicsOutput = undefined;
 
         status = boot_services.locateProtocol(
-            &GraphicsOutputProtocol.guid,
+            &GraphicsOutput.guid,
             null,
-            @ptrCast(*?*anyopaque, &graphics_output),
+            @ptrCast(&graphics_output),
         );
         if (status != .Success) {
             log.err("failed to locate GraphicsOutputProtocol: {}", .{status});
@@ -70,7 +70,7 @@ pub fn main() uefi.Status {
     for (0..max_attempt_count) |attempt_count| {
         status = boot_services.getMemoryMap(
             &map_size,
-            @ptrCast([*]MemoryDescriptor, buffer.ptr),
+            @ptrCast(buffer.ptr),
             &map_key,
             &descriptor_size,
             &descriptor_version,
@@ -110,7 +110,7 @@ pub fn main() uefi.Status {
         map_size = buffer.len;
         status = boot_services.getMemoryMap(
             &map_size,
-            @ptrCast([*]MemoryDescriptor, buffer.ptr),
+            @ptrCast(buffer.ptr),
             &map_key,
             &descriptor_size,
             &descriptor_version,
@@ -147,12 +147,12 @@ fn loadKernel(kernel_entry: **const kernel.EntryFn, debug_info: *?dwarf.DwarfInf
     const boot_services = uefi.system_table.boot_services.?;
 
     const loaded_image = blk: {
-        var result: *const LoadedImageProtocol = undefined;
+        var result: *const LoadedImage = undefined;
 
         const status = boot_services.handleProtocol(
             uefi.handle,
-            &LoadedImageProtocol.guid,
-            @ptrCast(*?*anyopaque, &result),
+            &LoadedImage.guid,
+            @ptrCast(&result),
         );
         if (status != .Success) {
             log.err("failed to get LoadedImage: {}", .{status});
@@ -162,15 +162,15 @@ fn loadKernel(kernel_entry: **const kernel.EntryFn, debug_info: *?dwarf.DwarfInf
         break :blk result;
     };
 
-    log.debug("bootloader base address: 0x{X}", .{@ptrToInt(loaded_image.image_base)});
+    log.debug("bootloader base address: 0x{X}", .{@intFromPtr(loaded_image.image_base)});
 
     const file_system = blk: {
-        var result: *const SimpleFileSystemProtocol = undefined;
+        var result: *const SimpleFileSystem = undefined;
 
         const status = boot_services.handleProtocol(
             loaded_image.device_handle.?,
-            &SimpleFileSystemProtocol.guid,
-            @ptrCast(*?*anyopaque, &result),
+            &SimpleFileSystem.guid,
+            @ptrCast(&result),
         );
         if (status != .Success) {
             log.err("failed to get SimpleFileSystem: {}", .{status});
@@ -181,7 +181,7 @@ fn loadKernel(kernel_entry: **const kernel.EntryFn, debug_info: *?dwarf.DwarfInf
     };
 
     const volume = blk: {
-        var result: *const FileProtocol = undefined;
+        var result: *const File = undefined;
 
         const status = file_system.openVolume(&result);
         if (status != .Success) {
@@ -195,13 +195,13 @@ fn loadKernel(kernel_entry: **const kernel.EntryFn, debug_info: *?dwarf.DwarfInf
 
     const kernel_file_path = "kernel.elf";
     const kernel_file = blk: {
-        var result: *FileProtocol = undefined;
+        var result: *File = undefined;
 
         const status = volume.open(
             &result,
             L(kernel_file_path),
-            FileProtocol.efi_file_mode_read,
-            FileProtocol.efi_file_read_only,
+            File.efi_file_mode_read,
+            File.efi_file_read_only,
         );
         if (status != .Success) {
             log.err("failed to open kernel file '{s}': {}", .{ kernel_file_path, status });
@@ -247,7 +247,7 @@ fn loadKernel(kernel_entry: **const kernel.EntryFn, debug_info: *?dwarf.DwarfInf
                 };
 
                 log.debug("allocating {} page(s) starting at address: 0x{X}", .{ page_count, page_address });
-                var page = @intToPtr([*]align(4096) u8, page_address);
+                var page: [*]align(4096) u8 = @ptrFromInt(page_address);
                 // TODO: Kernel Address Space Layout Randomisation (KASLR).
                 const status = boot_services.allocatePages(.AllocateAddress, .LoaderData, page_count, &page);
                 if (status != .Success) {
@@ -255,7 +255,7 @@ fn loadKernel(kernel_entry: **const kernel.EntryFn, debug_info: *?dwarf.DwarfInf
                     return status;
                 }
 
-                const segment = @intToPtr([*]u8, segment_address);
+                const segment: [*]u8 = @ptrFromInt(segment_address);
                 var size = segment_size_in_file;
                 _ = kernel_file.setPosition(program_header.p_offset);
                 _ = kernel_file.read(&size, segment);
@@ -273,13 +273,15 @@ fn loadKernel(kernel_entry: **const kernel.EntryFn, debug_info: *?dwarf.DwarfInf
 
     log.debug("kernel loaded", .{});
 
-    debug_info.* = debug.readElfDebugInfo(uefi.pool_allocator, kernel_file) catch |e| blk: {
-        log.warn("failed to read kernel debug info: {}", .{e});
-        break :blk null;
-    };
+    // TODO: Fix debug info parsing.
+    debug_info.* = null;
+    // debug_info.* = debug.readElfDebugInfo(uefi.pool_allocator, kernel_file) catch |e| blk: {
+    //     log.warn("failed to read kernel debug info: {}", .{e});
+    //     break :blk null;
+    // };
 
     const kernel_entry_address = header.entry;
-    kernel_entry.* = @intToPtr(*const kernel.EntryFn, kernel_entry_address);
+    kernel_entry.* = @ptrFromInt(kernel_entry_address);
     return .Success;
 }
 

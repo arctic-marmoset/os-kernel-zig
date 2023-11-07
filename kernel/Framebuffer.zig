@@ -10,7 +10,7 @@ height: u32,
 
 pub fn init(graphics: kernel.GraphicsInfo) Self {
     const framebuffer: Self = .{
-        .buffer = @intToPtr([*]u32, graphics.frame_buffer_base)[0..graphics.frame_buffer_size],
+        .buffer = @as([*]u32, @ptrFromInt(graphics.frame_buffer_base))[0..graphics.frame_buffer_size],
         .width = graphics.horizontal_resolution,
         .height = graphics.vertical_resolution,
     };

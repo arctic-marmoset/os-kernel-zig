@@ -34,6 +34,11 @@ fn init(info: *const kernel.InitInfo) callconv(.SysV) noreturn {
     debug_info = info.debug;
     const framebuffer = Framebuffer.init(info.graphics);
 
+    var waiting = true;
+    while (waiting) {
+        asm volatile ("pause");
+    }
+
     console = Console.init(framebuffer);
     log.debug("framebuffer initialised", .{});
 
@@ -75,12 +80,13 @@ pub fn panic(message: []const u8, error_return_trace: ?*StackTrace, return_addre
         var fba = FixedBufferAllocator.init(&buffer);
         var allocator = fba.allocator();
     };
+    _ = PanicContext;
 
     // TODO: This doesn't preserve the register values at the panic site.
     var registers = blk: {
         var result: [unwind.register_count]u64 = undefined;
         inline for (0..result.len) |i| {
-            const register = @intToEnum(arch.Register, i);
+            const register: arch.Register = @enumFromInt(i);
             const value = arch.getRegister(register);
             result[i] = value;
         }
@@ -94,73 +100,75 @@ pub fn panic(message: []const u8, error_return_trace: ?*StackTrace, return_addre
     var it = mem.window(u64, &registers, 4, 4);
     while (it.next()) |window| {
         for (window) |value| {
-            const register = @intToEnum(arch.Register, i);
+            const register: arch.Register = @enumFromInt(i);
             writer.print("{s: <3}={X:0>16} ", .{ @tagName(register), value }) catch unreachable;
             i += 1;
         }
         writer.writeByte('\n') catch unreachable;
     }
 
+    // TODO: Fix debug info parsing.
     // TODO: Clean all this up.
     // FIXME: `catch unreachable` everywhere.
     const first_trace_address = return_address orelse @returnAddress();
     writer.print("panic handler has debug info: {}\n", .{debug_info != null}) catch unreachable;
     writer.print("stacktrace:\n", .{}) catch unreachable;
     if (debug_info) |*info| {
+        _ = info;
         // TODO: Encapsulate CIE, `init_instructions`, FDE, etc. in `unwind`.
-        const debug_frame = info.debug_frame.?;
-        var stream = std.io.fixedBufferStream(debug_frame);
-        const cie_header_offset = 0;
-        const cie_header = unwind.CieHeader.parse(PanicContext.allocator, &stream) catch unreachable;
-        defer cie_header.deinit(PanicContext.allocator);
-        var init_instructions = std.ArrayList(unwind.Instruction).init(PanicContext.allocator);
-        defer init_instructions.deinit();
-        unwind.decodeInstructions(&stream, cie_header_offset, cie_header, cie_header.sizeInFile(), &init_instructions) catch unreachable;
-        const first_row_template: unwind.CfiRow = blk: {
-            var row: unwind.CfiRow = .{ .location = undefined, .cfa = undefined };
-            unwind.executeAllInstructionsForRow(init_instructions.items, undefined, &row) catch unreachable;
-            break :blk row;
-        };
+        // const debug_frame = info.debug_frame.?;
+        // var stream = std.io.fixedBufferStream(debug_frame);
+        // const cie_header_offset = 0;
+        // const cie_header = unwind.CieHeader.parse(PanicContext.allocator, &stream) catch unreachable;
+        // defer cie_header.deinit(PanicContext.allocator);
+        // var init_instructions = std.ArrayList(unwind.Instruction).init(PanicContext.allocator);
+        // defer init_instructions.deinit();
+        // unwind.decodeInstructions(&stream, cie_header_offset, cie_header, cie_header.sizeInFile(), &init_instructions) catch unreachable;
+        // const first_row_template: unwind.CfiRow = blk: {
+        //     var row: unwind.CfiRow = .{ .location = undefined, .cfa = undefined };
+        //     unwind.executeAllInstructionsForRow(init_instructions.items, undefined, &row) catch unreachable;
+        //     break :blk row;
+        // };
 
-        var entries = std.ArrayList(unwind.Fde).init(PanicContext.allocator);
-        defer entries.deinit();
-        while (stream.getPos() catch unreachable < stream.getEndPos() catch unreachable) {
-            const fde = unwind.Fde.parse(PanicContext.allocator, &stream, cie_header, first_row_template) catch unreachable;
-            entries.append(fde) catch unreachable;
-        }
-        mem.sortUnstable(unwind.Fde, entries.items, {}, unwind.Fde.addressLessThan);
+        // var entries = std.ArrayList(unwind.Fde).init(PanicContext.allocator);
+        // defer entries.deinit();
+        // while (stream.getPos() catch unreachable < stream.getEndPos() catch unreachable) {
+        //     const fde = unwind.Fde.parse(PanicContext.allocator, &stream, cie_header, first_row_template) catch unreachable;
+        //     entries.append(fde) catch unreachable;
+        // }
+        // mem.sortUnstable(unwind.Fde, entries.items, {}, unwind.Fde.addressLessThan);
 
-        var pc = arch.getInstructionPointer();
-        while (getReturnAddress(entries.items, pc, &registers) catch unreachable) |ra| : (pc = ra) {
-            // We don't actually care about printing the current PC here; we're obviously in the panic handler. Just
-            // start from the RA.
-            const call_address = ra - 1;
+        // var pc = arch.getInstructionPointer();
+        // while (getReturnAddress(entries.items, pc, &registers) catch unreachable) |ra| : (pc = ra) {
+        //     // We don't actually care about printing the current PC here; we're obviously in the panic handler. Just
+        //     // start from the RA.
+        //     const call_address = ra - 1;
 
-            // TODO: Maybe embed source files for pretty-printed traces.
-            const maybe_compile_unit = info.findCompileUnit(call_address) catch null;
+        //     // TODO: Maybe embed source files for pretty-printed traces.
+        //     const maybe_compile_unit = info.findCompileUnit(call_address) catch null;
 
-            const maybe_line_info = if (maybe_compile_unit) |compile_unit|
-                info.getLineNumberInfo(PanicContext.allocator, compile_unit.*, call_address) catch null
-            else
-                null;
+        //     const maybe_line_info = if (maybe_compile_unit) |compile_unit|
+        //         info.getLineNumberInfo(PanicContext.allocator, compile_unit.*, call_address) catch null
+        //     else
+        //         null;
 
-            if (maybe_line_info) |line_info| {
-                // Trim project root path from source location, or Zig lib path from lib source.
-                const source_location = if (mem.startsWith(u8, line_info.file_name, config.project_root_path))
-                    line_info.file_name[(config.project_root_path.len + 1)..]
-                else if (mem.indexOf(u8, line_info.file_name, config.zig_lib_prefix)) |prefix_index|
-                    line_info.file_name[prefix_index..]
-                else
-                    line_info.file_name;
+        //     if (maybe_line_info) |line_info| {
+        //         // Trim project root path from source location, or Zig lib path from lib source.
+        //         const source_location = if (mem.startsWith(u8, line_info.file_name, config.project_root_path))
+        //             line_info.file_name[(config.project_root_path.len + 1)..]
+        //         else if (mem.indexOf(u8, line_info.file_name, config.zig_lib_prefix)) |prefix_index|
+        //             line_info.file_name[prefix_index..]
+        //         else
+        //             line_info.file_name;
 
-                writer.print("{s}:{}:{}:", .{ source_location, line_info.line, line_info.column }) catch unreachable;
-            } else {
-                writer.writeAll("???:") catch unreachable;
-            }
+        //         writer.print("{s}:{}:{}:", .{ source_location, line_info.line, line_info.column }) catch unreachable;
+        //     } else {
+        //         writer.writeAll("???:") catch unreachable;
+        //     }
 
-            const name = info.getSymbolName(call_address) orelse "???";
-            writer.print(" 0x{X:0>16} in {s}\n", .{ call_address, name }) catch unreachable;
-        }
+        //     const name = info.getSymbolName(call_address) orelse "???";
+        //     writer.print(" 0x{X:0>16} in {s}\n", .{ call_address, name }) catch unreachable;
+        // }
     } else {
         var call_stack = StackIterator.init(first_trace_address, null);
         while (call_stack.next()) |stack_return_address| {
@@ -207,20 +215,20 @@ fn getReturnAddress(
         .undefined => {},
         .offset => |amount| {
             const fp_address = if (amount < 0)
-                frame_address - @intCast(u64, -fp_rule.offset)
+                frame_address - @as(u64, @intCast(-fp_rule.offset))
             else
-                frame_address + @intCast(u64, fp_rule.offset);
-            const fp = mem.readIntLittle(u64, @intToPtr(*const [8]u8, fp_address));
+                frame_address + @as(u64, @intCast(fp_rule.offset));
+            const fp = mem.readIntLittle(u64, @as(*const [8]u8, @ptrFromInt(fp_address)));
             registers[unwind.CfiRow.fp_index] = fp;
         },
     }
 
     const ra_rule = row.registers[unwind.CfiRow.ra_index];
     const ra_address = if (ra_rule.offset < 0)
-        frame_address - @intCast(u64, -ra_rule.offset)
+        frame_address - @as(u64, @intCast(-ra_rule.offset))
     else
-        frame_address + @intCast(u64, ra_rule.offset);
-    const ra = mem.readIntLittle(u64, @intToPtr(*const [8]u8, ra_address));
+        frame_address + @as(u64, @intCast(ra_rule.offset));
+    const ra = mem.readIntLittle(u64, @as(*const [8]u8, @ptrFromInt(ra_address)));
 
     registers[unwind.CfiRow.sp_index] = frame_address;
 
