@@ -42,7 +42,7 @@ pub fn build(b: *std.Build) !void {
         },
         .optimize = optimize,
     });
-    kernel.entry_symbol_name = kernel_entry_name;
+    kernel.entry = .{ .symbol_name = kernel_entry_name };
     kernel.red_zone = false;
     kernel.addOptions("config", kernel_config);
 

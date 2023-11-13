@@ -71,6 +71,7 @@ fn logToConsole(
 
 // TODO: Handle panic during panic. See `std.debug` `panicImpl()`, `panicking`, `panic_stage`,
 // `waitForOtherThreadToFinishPanicking()`, etc.
+// TODO: Exception handling inspiration from https://stackoverflow.com/questions/16617624/where-can-i-find-instruction-addresspc-value-in-linux-kernel.
 pub fn panic(message: []const u8, error_return_trace: ?*StackTrace, return_address: ?usize) noreturn {
     @setCold(true);
     _ = error_return_trace;
