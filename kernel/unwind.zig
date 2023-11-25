@@ -48,12 +48,12 @@ pub fn decodeInstructions(
                     break :blk .{ .advance_loc1 = offset };
                 },
                 .advance_loc2 => {
-                    const factored_offset = try source.reader().readIntLittle(u16);
+                    const factored_offset = try source.reader().readInt(u16, .little);
                     const offset = factored_offset * cie.code_alignment_factor;
                     break :blk .{ .advance_loc2 = offset };
                 },
                 .advance_loc4 => {
-                    const factored_offset = try source.reader().readIntLittle(u32);
+                    const factored_offset = try source.reader().readInt(u32, .little);
                     const offset = factored_offset * cie.code_alignment_factor;
                     break :blk .{ .advance_loc4 = offset };
                 },
@@ -250,7 +250,7 @@ pub const CieHeader = struct {
 
     pub fn parse(allocator: std.mem.Allocator, source: anytype) !CieHeader {
         const length = try readLength(source);
-        const id = try source.reader().readIntLittle(u32);
+        const id = try source.reader().readInt(u32, .little);
         const version = try source.reader().readByte();
 
         const augmentation = blk: {
@@ -296,9 +296,9 @@ pub const FdeHeader = struct {
 
     pub fn parse(source: anytype) !FdeHeader {
         const length = try readLength(source);
-        const cie_offset = try source.reader().readIntLittle(u32);
-        const location_begin = try source.reader().readIntLittle(u64);
-        const address_range = try source.reader().readIntLittle(u64);
+        const cie_offset = try source.reader().readInt(u32, .little);
+        const location_begin = try source.reader().readInt(u64, .little);
+        const address_range = try source.reader().readInt(u64, .little);
         const location_end = location_begin + address_range;
 
         return .{
@@ -406,7 +406,7 @@ fn generateRegisterTitlesHelper(comptime register: usize, comptime count: usize)
 }
 
 fn readLength(source: anytype) !u32 {
-    const length = try source.reader().readIntLittle(u32);
+    const length = try source.reader().readInt(u32, .little);
     if (length == std.math.maxInt(u32)) {
         return error.ExtendedLengthNotSupported;
     }

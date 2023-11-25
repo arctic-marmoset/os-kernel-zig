@@ -35,7 +35,7 @@ files.
 2. In VSCode's "Debug Console", enter the following commands:
 ```
 image add zig-out/hdd/kernel.elf
-image load --file path/to/kernel.elf --slide 0
+image load --file zig-out/hdd/kernel.elf --slide 0
 ```
 3. Step over.
 
