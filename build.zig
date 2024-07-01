@@ -9,12 +9,12 @@ pub fn build(b: *std.Build) !void {
     const optimize = b.standardOptimizeOption(.{});
 
     const kernel_interface = b.createModule(.{
-        .root_source_file = .{ .path = "kernel/kernel.zig" },
+        .root_source_file = b.path("kernel/kernel.zig"),
     });
 
     const bootloader = b.addExecutable(.{
         .name = "bootx64",
-        .root_source_file = .{ .path = "bootloader/main.zig" },
+        .root_source_file = b.path("bootloader/main.zig"),
         .target = std.Build.resolveTargetQuery(b, .{
             .cpu_arch = .x86_64,
             .os_tag = .uefi,
@@ -24,7 +24,7 @@ pub fn build(b: *std.Build) !void {
     });
     bootloader.root_module.addImport("kernel", kernel_interface);
 
-    const install_ovmf_vars = b.addInstallFile(.{ .path = "vendor/edk2-ovmf/x64/OVMF_VARS.fd" }, "OVMF_VARS.fd");
+    const install_ovmf_vars = b.addInstallFile(b.path("vendor/edk2-ovmf/x64/OVMF_VARS.fd"), "OVMF_VARS.fd");
     bootloader.step.dependOn(&install_ovmf_vars.step);
 
     const kernel_entry_name = "kernel_init";
@@ -34,7 +34,7 @@ pub fn build(b: *std.Build) !void {
     kernel_config.addOption([:0]const u8, "zig_lib_prefix", "zig" ++ path.sep_str ++ "lib" ++ path.sep_str ++ "std");
     const kernel = b.addExecutable(.{
         .name = "kernel",
-        .root_source_file = .{ .path = "kernel/main.zig" },
+        .root_source_file = b.path("kernel/main.zig"),
         .target = std.Build.resolveTargetQuery(b, .{
             .cpu_arch = .x86_64,
             .os_tag = .freestanding,
@@ -58,7 +58,7 @@ pub fn build(b: *std.Build) !void {
     b.default_step = make_hdd_structure_step;
 
     const tests = b.addTest(.{
-        .root_source_file = .{ .path = "test/main.zig" },
+        .root_source_file = b.path("test/main.zig"),
         .target = target,
         .optimize = optimize,
     });

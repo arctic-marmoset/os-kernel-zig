@@ -8,7 +8,11 @@
             "type": "shell",
             "command": "zig build test -freference-trace -Doptimize=${input:buildProfile}",
             "dependsOn": "build without tests",
-            "problemMatcher": "$zig"
+            "problemMatcher": "$zig",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
         },
         {
             "label": "build without tests",

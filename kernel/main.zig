@@ -54,8 +54,8 @@ fn declareEntryFunction(comptime function: kernel.EntryFn) void {
     @export(function, .{ .name = config.kernel_entry_name });
 }
 
-pub const std_options = struct {
-    pub const logFn = logToConsole;
+pub const std_options: std.Options = .{
+    .logFn = logToConsole,
 };
 
 fn logToConsole(

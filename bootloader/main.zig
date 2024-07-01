@@ -351,8 +351,8 @@ fn exitBootServices(boot_services: *const BootServices, memory_map: *MemoryMap) 
     try status.err();
 }
 
-pub const std_options = struct {
-    pub const logFn = logToConsole;
+pub const std_options: std.Options = .{
+    .logFn = logToConsole,
 };
 
 fn logToConsole(
@@ -382,7 +382,7 @@ fn logToConsole(
         const utf8 = std.fmt.allocPrint(LogContext.allocator, full_format, args) catch return;
         defer LogContext.allocator.free(utf8);
 
-        const utf16 = std.unicode.utf8ToUtf16LeWithNull(LogContext.allocator, utf8) catch return;
+        const utf16 = std.unicode.utf8ToUtf16LeAllocZ(LogContext.allocator, utf8) catch return;
         defer LogContext.allocator.free(utf16);
 
         _ = out.outputString(utf16);
