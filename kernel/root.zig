@@ -1,17 +1,11 @@
 const std = @import("std");
 
-const dwarf = std.dwarf;
 const uefi = std.os.uefi;
 
-const DwarfInfo = dwarf.DwarfInfo;
 const GraphicsPixelFormat = uefi.protocol.GraphicsOutput.PixelFormat;
-const MemoryDescriptor = uefi.tables.MemoryDescriptor;
 const PixelBitmask = uefi.protocol.GraphicsOutput.PixelBitmask;
 
-pub const EntryFn = fn (info: *const InitInfo) callconv(.SysV) noreturn;
-
 pub const InitInfo = struct {
-    debug: ?DwarfInfo,
     graphics: GraphicsInfo,
     memory: MemoryInfo,
 };
@@ -27,7 +21,7 @@ pub const GraphicsInfo = struct {
 };
 
 pub const MemoryInfo = struct {
-    buffer: []align(@alignOf(MemoryDescriptor)) u8,
+    buffer: []align(@alignOf(uefi.tables.MemoryDescriptor)) u8,
     map_size: usize,
     descriptor_size: usize,
 };

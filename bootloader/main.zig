@@ -2,269 +2,336 @@ const std = @import("std");
 const builtin = @import("builtin");
 const kernel = @import("kernel");
 
-const debug = @import("debug.zig");
 const serial = @import("serial.zig");
 
-const dwarf = std.dwarf;
-const elf = std.elf;
 const uefi = std.os.uefi;
 
-const AutoHashMap = std.AutoHashMap;
-const BootServices = uefi.tables.BootServices;
-const File = uefi.protocol.File;
-const GraphicsOutput = uefi.protocol.GraphicsOutput;
-const LoadedImage = uefi.protocol.LoadedImage;
-const MemoryDescriptor = uefi.tables.MemoryDescriptor;
-const SimpleFileSystem = uefi.protocol.SimpleFileSystem;
+const Utf8ToUcs2Stream = @import("string_encoding.zig").Utf8ToUcs2Stream;
 
 const L = std.unicode.utf8ToUtf16LeStringLiteral;
 
-const EfiError = uefi.Status.EfiError;
-const BootError = error{
-    OutOfMemory,
-    SeekError,
-    ReadError,
-    EndOfStream,
+const PageMapping = struct {
+    physical_address: usize,
+    page_count: usize,
+};
 
-    InvalidElfMagic,
-    InvalidElfVersion,
-    InvalidElfEndian,
-    InvalidElfClass,
-} || EfiError;
+const entry_address_mask: u64 = 0x0007_FFFF_FFFF_F000;
 
-/// Handles miscellaneous initialisation and error handling.
-pub fn main() uefi.Status {
+const PML4EFlags = packed struct(u8) {
+    /// P (Present)
+    present: bool = false,
+    /// R/W (Read/Write)
+    writable: bool = false,
+    /// U/S (User/Supervisor)
+    user_accesible: bool = false,
+    /// PWT (Page Write-Through): If set, write-through caching is enabled. If
+    /// not, then write-back is enabled instead.
+    writethrough: bool = false,
+    /// PCD (Page Cache Disable): If set, the page will not be cached.
+    noncacheable: bool = false,
+    /// A (Accessed)
+    accessed: bool = false,
+    _ignored6: u1 = 0,
+    _reserved7: u1 = 0,
+};
+
+const PDPEFlags = packed struct(u8) {
+    /// P (Present)
+    present: bool = false,
+    /// R/W (Read/Write)
+    writable: bool = false,
+    /// U/S (User/Supervisor)
+    user_accesible: bool = false,
+    /// PWT (Page Write-Through): If set, write-through caching is enabled. If
+    /// not, then write-back is enabled instead.
+    writethrough: bool = false,
+    /// PCD (Page Cache Disable): If set, the page will not be cached.
+    noncacheable: bool = false,
+    /// A (Accessed)
+    accessed: bool = false,
+    _ignored6: u1 = 0,
+    /// PS (Page Size): If set, this entry maps directly to a 1 GiB page.
+    page_size: bool = false,
+};
+
+const PDEFlags = packed struct(u8) {
+    /// P (Present)
+    present: bool = false,
+    /// R/W (Read/Write)
+    writable: bool = false,
+    /// U/S (User/Supervisor)
+    user_accesible: bool = false,
+    /// PWT (Page Write-Through): If set, write-through caching is enabled. If
+    /// not, then write-back is enabled instead.
+    writethrough: bool = false,
+    /// PCD (Page Cache Disable): If set, the page will not be cached.
+    noncacheable: bool = false,
+    /// A (Accessed)
+    accessed: bool = false,
+    _ignored6: u1 = 0,
+    /// PS (Page Size): If set, this entry maps directly to a 2 MiB page.
+    page_size: bool = false,
+};
+
+const PTEFlags = packed struct(u9) {
+    /// P (Present)
+    present: bool = false,
+    /// R/W (Read/Write)
+    writable: bool = false,
+    /// U/S (User/Supervisor)
+    user_accesible: bool = false,
+    /// PWT (Page Write-Through): If set, write-through caching is enabled. If
+    /// not, then write-back is enabled instead.
+    writethrough: bool = false,
+    /// PCD (Page Cache Disable): If set, the page will not be cached.
+    noncacheable: bool = false,
+    /// A (Accessed)
+    accessed: bool = false,
+    /// D (Dirty)
+    dirty: bool = false,
+    /// PAT (Page Attribute Table): If set, the MMU will consult the PAT MSR
+    /// to determine the "memory type" of the page.
+    pat: bool = false,
+    /// G (Global): If set, the page will not be flushed from the TLB on context
+    /// switches.
+    global: bool = false,
+};
+
+fn getTable(entry: u64) ?*align(std.mem.page_size) [512]u64 {
+    return @ptrFromInt(entry & entry_address_mask);
+}
+
+pub fn main() noreturn {
     serial.init();
 
-    _ = uefi.system_table.con_out.?.clearScreen();
     const boot_services = uefi.system_table.boot_services.?;
+    _ = uefi.system_table.con_out.?.clearScreen();
 
-    bootToKernel(boot_services) catch |e| {
-        return switch (e) {
-            BootError.LoadError => .LoadError,
-            BootError.InvalidParameter => .InvalidParameter,
-            BootError.Unsupported => .Unsupported,
-            BootError.BadBufferSize => .BadBufferSize,
-            BootError.BufferTooSmall => .BufferTooSmall,
-            BootError.NotReady => .NotReady,
-            BootError.DeviceError => .DeviceError,
-            BootError.WriteProtected => .WriteProtected,
-            BootError.OutOfResources => .OutOfResources,
-            BootError.VolumeCorrupted => .VolumeCorrupted,
-            BootError.VolumeFull => .VolumeFull,
-            BootError.NoMedia => .NoMedia,
-            BootError.MediaChanged => .MediaChanged,
-            BootError.NotFound => .NotFound,
-            BootError.AccessDenied => .AccessDenied,
-            BootError.NoResponse => .NoResponse,
-            BootError.NoMapping => .NoMapping,
-            BootError.Timeout => .Timeout,
-            BootError.NotStarted => .NotStarted,
-            BootError.AlreadyStarted => .AlreadyStarted,
-            BootError.Aborted => .Aborted,
-            BootError.IcmpError => .IcmpError,
-            BootError.TftpError => .TftpError,
-            BootError.ProtocolError => .ProtocolError,
-            BootError.IncompatibleVersion => .IncompatibleVersion,
-            BootError.SecurityViolation => .SecurityViolation,
-            BootError.CrcError => .CrcError,
-            BootError.EndOfMedia => .EndOfMedia,
-            BootError.EndOfFile => .EndOfFile,
-            BootError.InvalidLanguage => .InvalidLanguage,
-            BootError.CompromisedData => .CompromisedData,
-            BootError.IpAddressConflict => .IpAddressConflict,
-            BootError.HttpError => .HttpError,
-            BootError.NetworkUnreachable => .NetworkUnreachable,
-            BootError.HostUnreachable => .HostUnreachable,
-            BootError.ProtocolUnreachable => .ProtocolUnreachable,
-            BootError.PortUnreachable => .PortUnreachable,
-            BootError.ConnectionFin => .ConnectionFin,
-            BootError.ConnectionReset => .ConnectionReset,
-            BootError.ConnectionRefused => .ConnectionRefused,
-
-            BootError.OutOfMemory => .OutOfResources,
-            BootError.SeekError => .LoadError,
-            BootError.ReadError => .LoadError,
-            BootError.EndOfStream => .EndOfFile,
-
-            BootError.InvalidElfMagic,
-            BootError.InvalidElfVersion,
-            BootError.InvalidElfEndian,
-            BootError.InvalidElfClass,
-            => .InvalidParameter,
-        };
-    };
-}
-
-const Kernel = struct {
-    entry: *const kernel.EntryFn,
-    debug_info: ?dwarf.DwarfInfo,
-};
-
-const MemoryMap = struct {
-    key: usize,
-    buffer: []align(@alignOf(MemoryDescriptor)) u8,
-    size: usize,
-    descriptor_size: usize,
-    descriptor_version: u32,
-};
-
-fn bootToKernel(boot_services: *const BootServices) BootError!noreturn {
-    std.log.info("loading kernel binary into memory", .{});
-    const kern = try loadKernel(boot_services);
-    std.log.info("kernel entry address: 0x{X}", .{@intFromPtr(kern.entry)});
-
-    const graphics_info = try getGraphicsInfo(boot_services);
-    var memory_map = try getMemoryMap(boot_services);
-    std.log.debug("memory map key: 0x{X}", .{memory_map.key});
-    std.log.debug("memory map size: {} Bytes", .{memory_map.size});
-    std.log.debug("memory map capacity: {} Bytes", .{memory_map.buffer.len});
-
-    // NOTE: ExitBootServices and the kernel entry function should probably always be called in close succession.
-    std.log.info("handing over to kernel", .{});
-    try exitBootServices(boot_services, &memory_map);
-    // TODO: Figure out how to jump instead of calling.
-    kern.entry(&.{
-        .debug = kern.debug_info,
-        .graphics = graphics_info,
-        .memory = .{
-            .buffer = memory_map.buffer,
-            .map_size = memory_map.size,
-            .descriptor_size = memory_map.descriptor_size,
-        },
-    });
-}
-
-fn loadKernel(boot_services: *const BootServices) BootError!Kernel {
-    var loaded_image: *const LoadedImage = undefined;
-    boot_services.handleProtocol(
+    var status: uefi.Status = undefined;
+    var loaded_image: *const uefi.protocol.LoadedImage = undefined;
+    status = boot_services.openProtocol(
         uefi.handle,
-        &LoadedImage.guid,
+        &uefi.protocol.LoadedImage.guid,
         @ptrCast(&loaded_image),
-    ).err() catch |e| {
-        std.log.err("fatal: failed to get LoadedImage: {}", .{e});
-        return e;
-    };
-    std.log.debug("bootloader base address: 0x{X}", .{@intFromPtr(loaded_image.image_base)});
-
-    // TODO: Support opening kernel images from drives other than the boot drive, and filesystems other than FAT.
-    std.debug.assert(loaded_image.device_handle != null);
-    var boot_fs: *const SimpleFileSystem = undefined;
-    boot_services.openProtocol(
-        loaded_image.device_handle.?,
-        &SimpleFileSystem.guid,
-        @ptrCast(&boot_fs),
         uefi.handle,
         null,
         .{ .by_handle_protocol = true },
-    ).err() catch |e| {
-        std.log.err("fatal: failed to get SimpleFileSystem: {}", .{e});
-        return e;
-    };
+    );
+    if (status != .Success) {
+        std.debug.panic("failed to get LoadedImage: {s}", .{@tagName(status)});
+    }
 
-    var boot_volume: *const File = undefined;
-    boot_fs.openVolume(&boot_volume).err() catch |e| {
-        std.log.err("fatal: failed to open boot volume: {}", .{e});
-        return e;
-    };
-    defer _ = boot_volume.close();
+    std.log.debug("bootloader base address: 0x{X}", .{@intFromPtr(loaded_image.image_base)});
+
+    // TODO: Ability to load kernel from different volume and non-FAT filesystem.
+    var efi_filesystem: *const uefi.protocol.SimpleFileSystem = undefined;
+    status = boot_services.openProtocol(
+        loaded_image.device_handle.?,
+        &uefi.protocol.SimpleFileSystem.guid,
+        @ptrCast(&efi_filesystem),
+        uefi.handle,
+        null,
+        .{ .by_handle_protocol = true },
+    );
+    if (status != .Success) {
+        std.debug.panic("failed to get SimpleFileSystem: {s}", .{@tagName(status)});
+    }
+
+    var efi_volume: *const uefi.protocol.File = undefined;
+    status = efi_filesystem.openVolume(&efi_volume);
+    if (status != .Success) {
+        std.debug.panic("failed to open boot volume: {s}", .{@tagName(status)});
+    }
 
     const kernel_file_path = "kernel.elf";
-    var kernel_file: *File = undefined;
-    boot_volume.open(
+    var kernel_file: *uefi.protocol.File = undefined;
+    status = efi_volume.open(
         &kernel_file,
         L(kernel_file_path),
-        File.efi_file_mode_read,
-        File.efi_file_read_only,
-    ).err() catch |e| {
-        std.log.err("fatal: failed to open kernel binary file: {}", .{e});
-        return e;
-    };
-    defer _ = kernel_file.close();
+        uefi.protocol.File.efi_file_mode_read,
+        uefi.protocol.File.efi_file_read_only,
+    );
+    if (status != .Success) {
+        std.debug.panic("failed to open kernel binary file: {s}", .{@tagName(status)});
+    }
 
-    const header = elf.Header.read(kernel_file) catch |e| {
-        std.log.err("fatal: failed to parse kernel binary header: {}", .{e});
-        return e;
+    var page_mappings = std.AutoArrayHashMap(usize, PageMapping).init(uefi.pool_allocator);
+    defer page_mappings.deinit();
+
+    const header = std.elf.Header.read(kernel_file) catch |e| {
+        std.debug.panic("failed to parse kernel binary header: {}", .{e});
     };
 
-    var allocated_page_addresses = AutoHashMap(usize, usize).init(uefi.pool_allocator);
-    defer allocated_page_addresses.deinit();
+    const kernel_entry_address = header.entry;
+    std.log.info("kernel entry address: 0x{X}", .{kernel_entry_address});
 
     var phdr_iterator = header.program_header_iterator(kernel_file);
     while (phdr_iterator.next() catch |e| {
-        std.log.err("fatal: failed to parse kernel ELF program header: {}", .{e});
-        return e;
+        std.debug.panic("failed to parse kernel ELF program header: {}", .{e});
     }) |phdr| {
         // We only care about PT_LOAD segments.
-        if (phdr.p_type != elf.PT_LOAD) {
+        if (phdr.p_type != std.elf.PT_LOAD) {
             continue;
         }
 
-        const segment_file_offset = phdr.p_offset;
-        const segment_start_address = phdr.p_paddr;
+        const segment_virtual_address = phdr.p_vaddr;
         const segment_size_in_file = phdr.p_filesz;
         const segment_size_in_memory = phdr.p_memsz;
-        const first_page_address = std.mem.alignBackward(u64, segment_start_address, std.mem.page_size);
         const page_count = std.mem.alignForward(u64, segment_size_in_memory, std.mem.page_size) / std.mem.page_size;
-        std.log.debug("segment start address:  0x{X} (page 0x{X})", .{ segment_start_address, first_page_address });
-        std.log.debug("segment size in file:   0x{0X} ({0} Bytes)", .{segment_size_in_file});
-        std.log.debug("segment size in memory: 0x{0X} ({0} Bytes, {1} pages)", .{ segment_size_in_memory, page_count });
+        std.log.debug("segment virtual address: 0x{X}", .{segment_virtual_address});
+        std.log.debug("segment size in file:    0x{0X} ({0} Bytes)", .{segment_size_in_file});
+        std.log.debug("segment size in memory:  0x{0X} ({0} Bytes, {1} pages)", .{ segment_size_in_memory, page_count });
 
-        allocated_page_addresses.put(first_page_address, page_count) catch |e| {
-            std.log.warn("failed to put page address in `allocated_page_addresses`: {}", .{e});
+        // Allocate any pages, keeping track of the actual page addresses we've been given.
+        var segment: [*]align(std.mem.page_size) u8 = undefined;
+        status = boot_services.allocatePages(.AllocateAnyPages, .LoaderData, page_count, &segment);
+        if (status != .Success) {
+            std.debug.panic("failed to allocate pages for segment: {s}", .{@tagName(status)});
+        }
+        // TODO: Detect overlap and panic.
+        page_mappings.put(segment_virtual_address, .{
+            .physical_address = @intFromPtr(segment),
+            .page_count = page_count,
+        }) catch |e| {
+            std.debug.panic("failed to append page mapping: {}", .{e});
         };
 
-        var first_page: [*]align(std.mem.page_size) u8 = @ptrFromInt(first_page_address);
-        try boot_services.allocatePages(.AllocateAddress, .LoaderData, page_count, &first_page).err();
-
-        // Copy the segment data from the file into memory at the correct address.
-        // NOTE: We do not re-use `first_page` here because the segment start address is not necessarily aligned.
-        const segment: [*]u8 = @ptrFromInt(segment_start_address);
+        // Copy the segment data into memory.
+        // NOTE: We read directly into the start of the allocated pages under
+        // the assumption that all segments are page-aligned.
+        const segment_file_offset = phdr.p_offset;
+        status = kernel_file.setPosition(segment_file_offset);
+        if (status != .Success) {
+            std.debug.panic("failed to set kernel file cursor position: {s}", .{@tagName(status)});
+        }
         var read_size = segment_size_in_file;
-        try kernel_file.setPosition(segment_file_offset).err();
-        try kernel_file.read(&read_size, segment).err();
+        status = kernel_file.read(&read_size, segment);
+        if (status != .Success) {
+            std.debug.panic("failed to read segment contents into memory: {s}", .{@tagName(status)});
+        }
 
         // Zero the remaining bytes in memory.
-        // NOTE: We slice the many-pointer `segment` to give it a bound from 0..p_memsz, then we slice it again from
-        //  p_filesz..END to create a slice around the extra bytes that need to be zeroed.
-        std.debug.assert(segment_size_in_file <= segment_size_in_memory);
+        // NOTE: We slice the many-pointer `segment` to give it a bound from
+        // 0..p_memsz, then we slice it again from p_filesz..END to create a
+        // slice around the extra bytes that need to be zeroed.
+        if (segment_size_in_file > segment_size_in_memory) {
+            std.debug.panic("malformed segment: p_filesz should not be " ++
+                "greater than p_memsz (got: {} vs {})", .{
+                segment_size_in_file,
+                segment_size_in_memory,
+            });
+        }
         @memset(segment[0..segment_size_in_memory][segment_size_in_file..], 0);
     }
 
-    std.log.debug("allocated pages:", .{});
-    var page_address_iterator = allocated_page_addresses.iterator();
-    while (page_address_iterator.next()) |entry| {
-        std.log.debug("    0x{X}: {} page(s)", .{ entry.key_ptr.*, entry.value_ptr.* });
+    // Prepare address mappings for the kernel.
+    // NOTE: We expect a higher-half kernel, which simplifies this a lot. All we
+    // need to do is allocate at most 2 PDP tables (and all the child paging
+    // tables) and populate the last two entries of PML4 (which will be empty
+    // unless there's somehow a system out there with 16 EiB of physical memory).
+    const firmware_pml4 = asm volatile ("movq %%cr3, %[pml4]"
+        : [pml4] "=r" (-> *align(std.mem.page_size) [512]u64),
+    );
+    const pml4 = blk: {
+        var ptr: [*]align(std.mem.page_size) u8 = undefined;
+        status = boot_services.allocatePages(.AllocateAnyPages, .LoaderData, 1, &ptr);
+        if (status != .Success) {
+            std.debug.panic("failed to allocate pages for kernel " ++
+                "mapping PDPT: {s}", .{@tagName(status)});
+        }
+        const pml4: *align(std.mem.page_size) [512]u64 = @ptrCast(ptr);
+        break :blk pml4;
+    };
+    @memcpy(pml4, firmware_pml4);
+    var page_mapping_iterator = page_mappings.iterator();
+    while (page_mapping_iterator.next()) |entry| {
+        for (0..entry.value_ptr.page_count) |page_index| {
+            const virtual_address = entry.key_ptr.* + std.mem.page_size * page_index;
+            const physical_address = entry.value_ptr.physical_address + std.mem.page_size * page_index;
+
+            const pml4e_index: u9 = @truncate(virtual_address >> 39);
+            const pdpe_index: u9 = @truncate(virtual_address >> 30);
+            const pde_index: u9 = @truncate(virtual_address >> 21);
+            const pte_index: u9 = @truncate(virtual_address >> 12);
+
+            const pdpt = getTable(pml4[pml4e_index]) orelse blk: {
+                var ptr: [*]align(std.mem.page_size) u8 = undefined;
+                status = boot_services.allocatePages(.AllocateAnyPages, .LoaderData, 1, &ptr);
+                if (status != .Success) {
+                    std.debug.panic("failed to allocate pages for kernel " ++
+                        "mapping PDPT: {s}", .{@tagName(status)});
+                }
+                const pdpt: *align(std.mem.page_size) [512]u64 = @ptrCast(ptr);
+                @memset(pdpt, 0);
+
+                const flags: PML4EFlags = .{
+                    .present = true,
+                    .writable = true,
+                };
+                const pml4e = (@intFromPtr(pdpt) & entry_address_mask) | @as(u8, @bitCast(flags));
+                pml4[pml4e_index] = pml4e;
+                break :blk pdpt;
+            };
+
+            const pdt = getTable(pdpt[pdpe_index]) orelse blk: {
+                var ptr: [*]align(std.mem.page_size) u8 = undefined;
+                status = boot_services.allocatePages(.AllocateAnyPages, .LoaderData, 1, &ptr);
+                if (status != .Success) {
+                    std.debug.panic("failed to allocate pages for kernel " ++
+                        "mapping PDT: {s}", .{@tagName(status)});
+                }
+                const pdt: *align(std.mem.page_size) [512]u64 = @ptrCast(ptr);
+                @memset(pdt, 0);
+
+                const flags: PDPEFlags = .{
+                    .present = true,
+                    .writable = true,
+                };
+                const pdpe: u64 = (@intFromPtr(pdt) & entry_address_mask) | @as(u8, @bitCast(flags));
+                pdpt[pdpe_index] = pdpe;
+                break :blk pdt;
+            };
+
+            const pt = getTable(pdt[pde_index]) orelse blk: {
+                var ptr: [*]align(std.mem.page_size) u8 = undefined;
+                status = boot_services.allocatePages(.AllocateAnyPages, .LoaderData, 1, &ptr);
+                if (status != .Success) {
+                    std.debug.panic("failed to allocate pages for kernel " ++
+                        "mapping PT: {s}", .{@tagName(status)});
+                }
+                const pt: *align(std.mem.page_size) [512]u64 = @ptrCast(ptr);
+                @memset(pt, 0);
+
+                const flags: PDEFlags = .{
+                    .present = true,
+                    .writable = true,
+                };
+                const pde: u64 = (@intFromPtr(pt) & entry_address_mask) | @as(u8, @bitCast(flags));
+                pdt[pde_index] = pde;
+                break :blk pt;
+            };
+
+            const flags: PTEFlags = .{
+                .present = true,
+                .writable = true,
+            };
+            const pte: u64 = (physical_address & entry_address_mask) | @as(u9, @bitCast(flags));
+            pt[pte_index] = pte;
+        }
     }
 
-    const kernel_entry_address = header.entry;
-    const kernel_entry: *const kernel.EntryFn = @ptrFromInt(kernel_entry_address);
-
-    const debug_info = debug.readElfDebugInfo(uefi.pool_allocator, kernel_file) catch |e| blk: {
-        std.log.warn("failed to read kernel debug info: {}", .{e});
-        break :blk null;
-    };
-
-    const kern = Kernel{
-        .entry = kernel_entry,
-        .debug_info = debug_info,
-    };
-
-    return kern;
-}
-
-fn getGraphicsInfo(boot_services: *const BootServices) BootError!kernel.GraphicsInfo {
-    var graphics_output: *const GraphicsOutput = undefined;
-    boot_services.locateProtocol(
-        &GraphicsOutput.guid,
+    // Get graphics info.
+    var graphics_output: *const uefi.protocol.GraphicsOutput = undefined;
+    status = boot_services.locateProtocol(
+        &uefi.protocol.GraphicsOutput.guid,
         null,
         @ptrCast(&graphics_output),
-    ).err() catch |e| {
-        std.log.err("fatal: failed to get GraphicsOutput: {}", .{e});
-        return e;
-    };
+    );
+    if (status != .Success) {
+        std.debug.panic("failed to get GraphicsOutput: {s}", .{@tagName(status)});
+    }
 
-    const info = kernel.GraphicsInfo{
+    const graphics_info = kernel.GraphicsInfo{
         .frame_buffer_base = graphics_output.mode.frame_buffer_base,
         .frame_buffer_size = graphics_output.mode.frame_buffer_size,
         .horizontal_resolution = graphics_output.mode.info.horizontal_resolution,
@@ -274,19 +341,14 @@ fn getGraphicsInfo(boot_services: *const BootServices) BootError!kernel.Graphics
         .pixels_per_scan_line = graphics_output.mode.info.pixels_per_scan_line,
     };
 
-    return info;
-}
-
-fn getMemoryMap(boot_services: *const BootServices) BootError!MemoryMap {
-    var status: uefi.Status = .Success;
-
-    var buffer: []align(@alignOf(MemoryDescriptor)) u8 = &.{};
+    // Get the memory map.
+    // NOTE: We do not limit the number of attempts since this is a critical step.
+    std.log.info("retrieving memory map", .{});
+    var buffer: []align(@alignOf(uefi.tables.MemoryDescriptor)) u8 = &.{};
     var buffer_size: usize = 0;
     var key: usize = 0;
     var descriptor_size: usize = 0;
     var descriptor_version: u32 = 0;
-
-    // We do not limit the number of attempts since this is a critical step.
     while (true) {
         status = boot_services.getMemoryMap(
             &buffer_size,
@@ -299,56 +361,78 @@ fn getMemoryMap(boot_services: *const BootServices) BootError!MemoryMap {
             break;
         }
 
-        // 1) Add 2 more descriptors because allocating the buffer could cause 1 region to split into 2.
-        // 2) Add a few more descriptors because calling ExitBootServices later can fail with InvalidParameter, which
-        //    indicates that the memory map was modified and GetMemoryMap must be called again. However, Boot Services
-        //    will not be available, so the pool allocator will not exist. So, we have to preemptively allocate extra
-        //    memory here.
-        buffer_size += descriptor_size * (2 + 6);
+        // 1) Add 2 more descriptors because allocating the buffer could cause
+        //    1 region to split into 2.
+        // 2) Add a few more descriptors (arbitrary - how about 6) because
+        //    calling ExitBootServices later can fail with InvalidParameter,
+        //    which indicates that the memory map was modified and GetMemoryMap
+        //    must be called again. However, Boot Services will not be
+        //    available, so the pool allocator will not exist. So, we have to
+        //    preemptively allocate extra memory here.
+        const extra_descriptor_count = 2 + 6;
+        buffer_size += descriptor_size * extra_descriptor_count;
         std.log.debug("buffer too small - resizing to {} Bytes", .{buffer_size});
 
-        uefi.pool_allocator.free(buffer);
-        buffer = try uefi.pool_allocator.alignedAlloc(u8, @alignOf(MemoryDescriptor), buffer_size);
+        uefi.raw_pool_allocator.free(buffer);
+        // PoolAllocator guarantees 8-byte alignment, which should be enough for MemoryDescriptor.
+        buffer = @alignCast(uefi.raw_pool_allocator.alloc(u8, buffer_size) catch |e| {
+            std.debug.panic("failed to allocate buffer for memory map: {}", .{e});
+        });
+    }
+    if (status != .Success) {
+        std.debug.panic("failed to get memory map: {s}", .{@tagName(status)});
     }
 
-    errdefer uefi.pool_allocator.free(buffer);
-    try status.err();
-
-    const memory_map = MemoryMap{
-        .key = key,
-        .buffer = buffer,
-        .size = buffer_size,
-        .descriptor_size = descriptor_size,
-        .descriptor_version = descriptor_version,
-    };
-
-    return memory_map;
-}
-
-fn exitBootServices(boot_services: *const BootServices, memory_map: *MemoryMap) BootError!void {
-    var status: uefi.Status = .Success;
-
-    // We do not limit the number of attempts since this is a critical step.
     while (true) {
-        status = boot_services.exitBootServices(uefi.handle, memory_map.key);
+        status = boot_services.exitBootServices(uefi.handle, key);
         if (status != .InvalidParameter) {
             break;
         }
 
         // If status is InvalidParameter, then we need to update our memory map.
-        memory_map.size = memory_map.buffer.len;
-        // If GetMemoryMap fails, there is nothing we can do. Break here and propagate the error up the call stack.
-        try boot_services.getMemoryMap(
-            &memory_map.size,
-            @ptrCast(memory_map.buffer.ptr),
-            &memory_map.key,
-            &memory_map.descriptor_size,
-            &memory_map.descriptor_version,
-        ).err();
+        buffer_size = buffer.len;
+        // If GetMemoryMap fails, there is nothing we can do.
+        status = boot_services.getMemoryMap(
+            &buffer_size,
+            @ptrCast(buffer.ptr),
+            &key,
+            &descriptor_size,
+            &descriptor_version,
+        );
+        if (status != .Success) {
+            std.debug.panic("failed to get final memory map: {s}", .{@tagName(status)});
+        }
+    }
+    if (status != .Success) {
+        std.debug.panic("failed to exit boot services: {s}", .{@tagName(status)});
     }
 
-    // Hopefully the whole process finished successfully.
-    try status.err();
+    const init_info: kernel.InitInfo = .{
+        .graphics = graphics_info,
+        .memory = .{
+            .buffer = buffer,
+            .map_size = buffer_size,
+            .descriptor_size = descriptor_size,
+        },
+    };
+
+    // Apply our address mappings.
+    serial.writer().print("updating page tables\r\n", .{}) catch unreachable;
+    asm volatile ("movq %[pml4], %%cr3"
+        :
+        : [pml4] "r" (pml4),
+    );
+
+    serial.writer().print("jumping to kernel entry\r\n", .{}) catch unreachable;
+    asm volatile (
+        \\ movq %[init_info], %%rdi
+        \\ jmpq *%[kernel_entry]
+        :
+        : [init_info] "r" (&init_info),
+          [kernel_entry] "r" (kernel_entry_address),
+    );
+
+    unreachable;
 }
 
 pub const std_options: std.Options = .{
@@ -361,14 +445,6 @@ fn logToConsole(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    // Use a fixed buffer for allocation instead of the UEFI pool allocator to avoid modifying the memory map. This is
-    // mostly useful in the period between the first call to GetMemoryMap and the call to ExitBootServices.
-    const LogContext = struct {
-        var buffer: [1024]u8 = undefined;
-        var fba = std.heap.FixedBufferAllocator.init(&buffer);
-        const allocator = fba.allocator();
-    };
-
     const level_string = comptime level.asText();
 
     const prefix = if (scope == .default)
@@ -379,16 +455,9 @@ fn logToConsole(
     const full_format = level_string ++ prefix ++ format ++ "\r\n";
 
     if (uefi.system_table.con_out) |out| {
-        const utf8 = std.fmt.allocPrint(LogContext.allocator, full_format, args) catch return;
-        defer LogContext.allocator.free(utf8);
-
-        const utf16 = std.unicode.utf8ToUtf16LeAllocZ(LogContext.allocator, utf8) catch return;
-        defer LogContext.allocator.free(utf16);
-
-        _ = out.outputString(utf16);
+        std.fmt.format(Utf8ToUcs2Stream.init(out).writer(), full_format, args) catch {};
     } else {
-        const writer = serial.writer();
-        writer.print(full_format, args) catch unreachable;
+        serial.writer().print(full_format, args) catch unreachable;
     }
 }
 
@@ -397,14 +466,26 @@ pub fn panic(
     error_return_trace: ?*std.builtin.StackTrace,
     return_address: ?usize,
 ) noreturn {
-    @setCold(true);
+    @branchHint(.cold);
     _ = error_return_trace;
 
     const first_trace_address = return_address orelse @returnAddress();
-    const writer = serial.writer();
-    writer.print("fatal: {s} at 0x{X}\r\n", .{ message, first_trace_address }) catch unreachable;
+    const format = "fatal: {s} at 0x{X}\r\n";
+    const args = .{ message, first_trace_address };
 
-    while (true) {
-        asm volatile ("hlt");
+    serial.writer().print(format, args) catch unreachable;
+
+    inline for (.{ uefi.system_table.std_err, uefi.system_table.con_out }) |o| {
+        if (o) |out| {
+            _ = out.setAttribute(uefi.protocol.SimpleTextOutput.red);
+            std.fmt.format(Utf8ToUcs2Stream.init(out).writer(), format, args) catch {};
+            _ = out.setAttribute(uefi.protocol.SimpleTextOutput.lightgray);
+        }
     }
+
+    if (uefi.system_table.boot_services) |boot_services| {
+        _ = boot_services.exit(uefi.handle, .Aborted, 0, null);
+    }
+
+    @trap();
 }

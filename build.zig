@@ -1,21 +1,18 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const path = std.fs.path;
-
-pub fn build(b: *std.Build) !void {
+pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
-
     const optimize = b.standardOptimizeOption(.{});
 
     const kernel_interface = b.createModule(.{
-        .root_source_file = b.path("kernel/kernel.zig"),
+        .root_source_file = b.path("kernel/root.zig"),
     });
 
     const bootloader = b.addExecutable(.{
         .name = "bootx64",
         .root_source_file = b.path("bootloader/main.zig"),
-        .target = std.Build.resolveTargetQuery(b, .{
+        .target = b.resolveTargetQuery(.{
             .cpu_arch = .x86_64,
             .os_tag = .uefi,
             .abi = .msvc,
@@ -24,27 +21,41 @@ pub fn build(b: *std.Build) !void {
     });
     bootloader.root_module.addImport("kernel", kernel_interface);
 
-    const install_ovmf_vars = b.addInstallFile(b.path("vendor/edk2-ovmf/x64/OVMF_VARS.fd"), "OVMF_VARS.fd");
-    bootloader.step.dependOn(&install_ovmf_vars.step);
-
-    const kernel_entry_name = "kernel_init";
-    const kernel_config = b.addOptions();
-    kernel_config.addOption([:0]const u8, "kernel_entry_name", kernel_entry_name);
-    kernel_config.addOption([:0]const u8, "project_root_path", try b.allocator.dupeZ(u8, b.pathFromRoot("")));
-    kernel_config.addOption([:0]const u8, "zig_lib_prefix", "zig" ++ path.sep_str ++ "lib" ++ path.sep_str ++ "std");
+    const build_kernel_init = b.addSystemCommand(&.{ "nasm", "-f", "elf64" });
+    build_kernel_init.addArg("-w+all");
+    build_kernel_init.addArg("-g");
+    build_kernel_init.addArgs(&.{ "-F", "dwarf" });
+    build_kernel_init.addArg("-o");
+    const init_object = build_kernel_init.addOutputFileArg("init.asm.o");
+    build_kernel_init.addFileArg(b.path("kernel/init.asm"));
     const kernel = b.addExecutable(.{
         .name = "kernel",
         .root_source_file = b.path("kernel/main.zig"),
-        .target = std.Build.resolveTargetQuery(b, .{
+        .target = b.resolveTargetQuery(.{
             .cpu_arch = .x86_64,
             .os_tag = .freestanding,
             .abi = .none,
         }),
         .optimize = optimize,
     });
-    kernel.entry = .{ .symbol_name = kernel_entry_name };
+    kernel.addObjectFile(init_object);
+    kernel.entry = .{ .symbol_name = "kernel_init" };
+    kernel.linker_script = b.path("kernel/linker.ld");
     kernel.root_module.red_zone = false;
-    kernel.root_module.addOptions("config", kernel_config);
+    kernel.root_module.pic = false;
+    kernel.root_module.code_model = .kernel;
+
+    const tests = b.addTest(.{
+        .root_source_file = b.path("test/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_tests = b.addRunArtifact(tests);
+    const run_tests_step = b.step("test", "Run all tests");
+    run_tests_step.dependOn(&run_tests.step);
+
+    const install_ovmf_vars = b.addInstallFile(b.path("vendor/edk2-ovmf/x64/OVMF_VARS.fd"), "OVMF_VARS.fd");
+    b.getInstallStep().dependOn(&install_ovmf_vars.step);
 
     const make_hdd_structure_step = b.step("hdd", "Make HDD directory structure");
     const copy_bootloader = b.addInstallFile(bootloader.getEmittedBin(), "hdd/EFI/BOOT/bootx64.efi");
@@ -55,15 +66,5 @@ pub fn build(b: *std.Build) !void {
     const copy_kernel = b.addInstallFile(kernel.getEmittedBin(), "hdd/kernel.elf");
     make_hdd_structure_step.dependOn(&copy_bootloader.step);
     make_hdd_structure_step.dependOn(&copy_kernel.step);
-    b.default_step = make_hdd_structure_step;
-
-    const tests = b.addTest(.{
-        .root_source_file = b.path("test/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const run_tests = b.addRunArtifact(tests);
-    const run_tests_step = b.step("test", "Run all tests");
-    run_tests_step.dependOn(&run_tests.step);
+    b.getInstallStep().dependOn(make_hdd_structure_step);
 }

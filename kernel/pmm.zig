@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const kernel = @import("kernel.zig");
+const kernel = @import("root.zig");
 
 const fmt = std.fmt;
 const log = std.log.scoped(.pmm);

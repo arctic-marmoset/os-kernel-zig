@@ -70,7 +70,7 @@ def load_symbols(
             return
         base_address -= 0x1000
 
-    print(f'base address: 0x{base_address:08x}')
+    print(f"base address: 0x{base_address:08x}")
     debugger.HandleCommand(f"target symbols add {symbols_path}")
     debugger.HandleCommand(f"target modules load --file {binary_name_with_ext} --slide {base_address}")
     debugger.HandleCommand(f"expr {wait_variable_name} = 0")

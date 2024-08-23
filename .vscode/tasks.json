@@ -6,19 +6,12 @@
         {
             "label": "build",
             "type": "shell",
-            "command": "zig build test -freference-trace -Doptimize=${input:buildProfile}",
-            "dependsOn": "build without tests",
+            "command": "zig build -Doptimize=${input:buildProfile}",
             "problemMatcher": "$zig",
             "group": {
                 "kind": "build",
                 "isDefault": true
             }
-        },
-        {
-            "label": "build without tests",
-            "type": "shell",
-            "command": "zig build -freference-trace -Doptimize=${input:buildProfile}",
-            "problemMatcher": "$zig"
         },
         {
             "label": "launch QEMU",
@@ -27,6 +20,8 @@
             "dependsOn": "build",
             "command": "qemu-system-x86_64",
             "args": [
+                "-monitor",
+                "stdio",
                 "-s",
                 "-S",
                 "-d",

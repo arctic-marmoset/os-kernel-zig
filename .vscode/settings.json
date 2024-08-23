@@ -5,5 +5,8 @@
     "lldb.showDisassembly": "auto",
     "lldb.adapterEnv": {
         "LLDB_USE_NATIVE_PDB_READER": "yes"
-    }
+    },
+    "nasm.extraFlags": [
+        "-f elf64"
+    ]
 }
