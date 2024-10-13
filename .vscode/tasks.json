@@ -20,6 +20,8 @@
             "dependsOn": "build",
             "command": "qemu-system-x86_64",
             "args": [
+                "-cpu",
+                "Skylake-Client",
                 "-monitor",
                 "stdio",
                 "-s",

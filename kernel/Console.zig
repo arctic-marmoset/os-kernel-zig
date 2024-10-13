@@ -2,24 +2,19 @@ const std = @import("std");
 
 const font = @import("font.zig");
 
-const io = std.io;
-const math = std.math;
-const mem = std.mem;
-
-const StaticBitSet = std.StaticBitSet;
 const Framebuffer = @import("Framebuffer.zig");
 
-const Self = @This();
+const Console = @This();
 
 x: u32 = 0,
 y: u32 = 0,
 framebuffer: Framebuffer,
 
-pub fn init(framebuffer: Framebuffer) Self {
+pub fn init(framebuffer: Framebuffer) Console {
     return .{ .framebuffer = framebuffer };
 }
 
-pub fn writeByte(self: *Self, byte: u8) void {
+pub fn writeByte(self: *Console, byte: u8) void {
     switch (byte) {
         '\n', '\x0B' => |c| {
             self.y += font.height;
@@ -41,7 +36,7 @@ pub fn writeByte(self: *Self, byte: u8) void {
 
             const char_data = font.data[byte];
             for (0..font.height) |row| {
-                const row_data = StaticBitSet(font.width){ .mask = char_data[row] };
+                const row_data = std.StaticBitSet(font.width){ .mask = char_data[row] };
                 var it = row_data.iterator(.{});
                 while (it.next()) |mirrored_column| {
                     const column = font.width - mirrored_column;
@@ -62,7 +57,7 @@ pub fn writeByte(self: *Self, byte: u8) void {
     }
 }
 
-pub fn write(self: *Self, bytes: []const u8) WriteError!usize {
+pub fn write(self: *Console, bytes: []const u8) WriteError!usize {
     for (bytes) |c| {
         self.writeByte(c);
     }
@@ -70,26 +65,26 @@ pub fn write(self: *Self, bytes: []const u8) WriteError!usize {
     return bytes.len;
 }
 
-pub fn resetCursor(self: *Self) void {
+pub fn resetCursor(self: *Console) void {
     self.x = 0;
     self.y = 0;
 }
 
 // TODO: Arbitrary scroll amount.
-fn scrollLine(self: *Self) void {
+fn scrollLine(self: *Console) void {
     const history = self.framebuffer.verticalRegion(font.height, self.y);
     const destination = self.framebuffer.verticalRegion(0, self.y - font.height);
-    mem.copyForwards(u32, destination, history);
+    std.mem.copyForwards(u32, destination, history);
 
     self.y -= font.height;
     const line = self.framebuffer.verticalRegion(self.y, self.y + font.height);
     @memset(line, 0x00000000);
 }
 
-pub const Writer = io.Writer(*Self, WriteError, write);
+pub const Writer = std.io.Writer(*Console, WriteError, write);
 
 pub const WriteError = error{};
 
-pub fn writer(self: *Self) Writer {
+pub fn writer(self: *Console) Writer {
     return .{ .context = self };
 }

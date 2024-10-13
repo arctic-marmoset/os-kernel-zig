@@ -155,6 +155,7 @@ pub fn main() noreturn {
         std.debug.panic("failed to open kernel binary file: {s}", .{@tagName(status)});
     }
 
+    // TODO: This actually isn't necessary. We can just create the mappings in the same loop.
     var page_mappings = std.AutoArrayHashMap(usize, PageMapping).init(uefi.pool_allocator);
     defer page_mappings.deinit();
 
@@ -229,9 +230,10 @@ pub fn main() noreturn {
     // need to do is allocate at most 2 PDP tables (and all the child paging
     // tables) and populate the last two entries of PML4 (which will be empty
     // unless there's somehow a system out there with 16 EiB of physical memory).
-    const firmware_pml4 = asm volatile ("movq %%cr3, %[pml4]"
+    const firmware_pml4 = asm ("movq %%cr3, %[pml4]"
         : [pml4] "=r" (-> *align(std.mem.page_size) [512]u64),
     );
+    // Make a copy of the existing PML4 table since it could be on a read-only page.
     const pml4 = blk: {
         var ptr: [*]align(std.mem.page_size) u8 = undefined;
         status = boot_services.allocatePages(.AllocateAnyPages, .LoaderData, 1, &ptr);
@@ -243,6 +245,7 @@ pub fn main() noreturn {
         break :blk pml4;
     };
     @memcpy(pml4, firmware_pml4);
+    // TODO: Set R/W bit per segment.
     var page_mapping_iterator = page_mappings.iterator();
     while (page_mapping_iterator.next()) |entry| {
         for (0..entry.value_ptr.page_count) |page_index| {
@@ -383,6 +386,9 @@ pub fn main() noreturn {
         std.debug.panic("failed to get memory map: {s}", .{@tagName(status)});
     }
 
+    // ExitBootServices probably invalidates firmware interrupt handlers. Disable
+    // interrupts before calling it.
+    cli();
     while (true) {
         status = boot_services.exitBootServices(uefi.handle, key);
         if (status != .InvalidParameter) {
@@ -433,6 +439,21 @@ pub fn main() noreturn {
     );
 
     unreachable;
+}
+
+inline fn cli() void {
+    asm volatile ("cli");
+}
+
+inline fn hlt() void {
+    asm volatile ("hlt");
+}
+
+inline fn hang() noreturn {
+    cli();
+    while (true) {
+        hlt();
+    }
 }
 
 pub const std_options: std.Options = .{
@@ -487,5 +508,5 @@ pub fn panic(
         _ = boot_services.exit(uefi.handle, .Aborted, 0, null);
     }
 
-    @trap();
+    hang();
 }

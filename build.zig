@@ -14,6 +14,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("bootloader/main.zig"),
         .target = b.resolveTargetQuery(.{
             .cpu_arch = .x86_64,
+            .cpu_model = .{ .explicit = &std.Target.x86.cpu.x86_64_v2 },
             .os_tag = .uefi,
             .abi = .msvc,
         }),
@@ -33,6 +34,13 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("kernel/main.zig"),
         .target = b.resolveTargetQuery(.{
             .cpu_arch = .x86_64,
+            .cpu_model = .{ .explicit = &std.Target.x86.cpu.x86_64_v3 },
+            .cpu_features_add = std.Target.x86.featureSet(&.{.soft_float}),
+            .cpu_features_sub = std.Target.x86.featureSet(&.{
+                .x87,    .avx,    .avx2,
+                .sse,    .sse2,   .sse3,
+                .sse4_1, .sse4_2, .ssse3,
+            }),
             .os_tag = .freestanding,
             .abi = .none,
         }),
@@ -43,6 +51,7 @@ pub fn build(b: *std.Build) void {
     kernel.linker_script = b.path("kernel/linker.ld");
     kernel.root_module.red_zone = false;
     kernel.root_module.pic = false;
+    kernel.root_module.omit_frame_pointer = false;
     kernel.root_module.code_model = .kernel;
 
     const tests = b.addTest(.{
