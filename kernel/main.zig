@@ -1,65 +1,78 @@
 const std = @import("std");
 
-const kernel = @import("root.zig");
-const mem = @import("mem.zig");
+const limine = @import("limine.zig");
+const native = @import("native.zig");
 const paging = @import("paging.zig");
 const pmm = @import("pmm.zig");
+const serial = @import("serial.zig");
 
 const Console = @import("Console.zig");
 const Framebuffer = @import("Framebuffer.zig");
 
-// FIXME: `logToConsole` needs access to `console` but having this lying around is ugly.
-var console: Console = undefined;
+// zig fmt: off
+export var limine_requests_start_marker linksection(limine.section.requests_start) = limine.requests_start_marker;
+export var limine_requests_end_marker   linksection(limine.section.requests_end)   = limine.requests_end_marker;
+// zig fmt: on
 
-export fn main(
-    // anyopaque to prevent direct usage.
-    data: *align(@alignOf(kernel.InitInfo)) const anyopaque,
-) linksection(".text.init") callconv(.SysV) noreturn {
-    // Copy to kernel stack as previous stack will be invalidated later.
-    var init_info = @as(*const kernel.InitInfo, @ptrCast(data)).*;
-    var framebuffer = Framebuffer.init(init_info.graphics);
-    framebuffer.clear(0x00000000);
+// zig fmt: off
+export var limine_base_revision: limine.BaseRevision       linksection(limine.section.requests) = .{ .revision = 2 };
+export var stack_size_request:   limine.StackSizeRequest   linksection(limine.section.requests) = .{ .stack_size = 2 * std.mem.page_size };
+export var hhdm_request:         limine.HhdmRequest        linksection(limine.section.requests) = .{};
+export var framebuffer_request:  limine.FramebufferRequest linksection(limine.section.requests) = .{};
+export var memory_map_request:   limine.MemoryMapRequest   linksection(limine.section.requests) = .{};
+// zig fmt: on
 
-    console = Console.init(framebuffer);
-    std.log.info("starting kernel", .{});
+var console: ?Console = null;
 
-    std.log.debug("waiting for debugger", .{});
-    var waiting = true;
-    std.mem.doNotOptimizeAway(&waiting);
-    while (waiting) {
-        asm volatile ("pause");
+export fn _start() noreturn {
+    serial.init();
+
+    if (!limine_base_revision.isSupported()) {
+        serial.writer().writeAll("bootloader does not support expected base revision\r\n") catch unreachable;
+        native.crashAndBurn();
     }
 
-    var bootstrap_page_allocator = pmm.init(init_info.memory) catch |e| {
+    if (framebuffer_request.response) |response| {
+        if (response.framebuffer_count > 0) {
+            const framebuffer_description = response.framebuffers_ptr[0];
+            const framebuffer = Framebuffer.init(framebuffer_description);
+            console = Console.init(framebuffer);
+        }
+    }
+    if (console == null) {
+        std.log.info("no framebuffer available: running headless", .{});
+    }
+
+    std.log.info("starting kernel", .{});
+
+    if (stack_size_request.response == null) {
+        @panic("bootloader failed to fulfill stack size request");
+    }
+
+    const hhdm_response = hhdm_request.response orelse {
+        @panic("bootloader failed to provide HHDM offset");
+    };
+
+    const memory_map_response = memory_map_request.response orelse {
+        @panic("bootloader failed to provide memory map");
+    };
+
+    pmm.init(memory_map_response.entries(), hhdm_response.offset) catch |e| {
         std.debug.panic("failed to initialise physical memory manager (PMM): {}", .{e});
     };
 
-    // TODO: This invalidates all pointers recieved from init_info. We need to
-    // reconstruct init_info, converting the physical addresses to virtual addresses.
-    paging.init(&bootstrap_page_allocator, &init_info) catch |e| {
-        std.debug.panic("failed to set up paging: {}", .{e});
+    paging.init() catch |e| {
+        std.debug.panic("failed to initialise page tables: {}", .{e});
     };
-
-    framebuffer = Framebuffer.init(init_info.graphics);
-    console.framebuffer = framebuffer;
 
     @panic("scheduler returned control to kernel init function");
 }
 
-inline fn cli() void {
-    asm volatile ("cli");
-}
-
-inline fn hlt() void {
-    asm volatile ("hlt");
-}
-
-inline fn hang() noreturn {
-    cli();
-    while (true) {
-        hlt();
-    }
-}
+pub const os = struct {
+    pub const heap = struct {
+        pub const page_allocator = pmm.page_allocator;
+    };
+};
 
 pub const std_options: std.Options = .{
     .logFn = logToConsole,
@@ -73,30 +86,57 @@ fn logToConsole(
 ) void {
     const level_string = comptime level.asText();
     const prefix = if (scope == .default) ": " else "(" ++ @tagName(scope) ++ "): ";
+    const full_format = level_string ++ prefix ++ format;
 
-    console.writer().print(level_string ++ prefix ++ format ++ "\n", args) catch unreachable;
+    debugPrint(full_format ++ "\n", args);
 }
 
-pub fn panic(
-    message: []const u8,
-    error_return_trace: ?*std.builtin.StackTrace,
-    return_address: ?usize,
-) noreturn {
-    @branchHint(.cold);
-    _ = error_return_trace;
+fn debugPrint(
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    serial.writer().print(
+        if (format[format.len - 1] == '\n')
+            format[0..(format.len - 1)] ++ "\r\n"
+        else
+            format,
+        args,
+    ) catch unreachable;
 
-    const writer = console.writer();
-    writer.print("kernel panic: {s}\n", .{message}) catch unreachable;
+    if (console) |*out| {
+        out.writer().print(format, args) catch unreachable;
+    }
+}
 
-    // FIXME: `catch unreachable` everywhere.
-    const first_trace_address = return_address orelse @returnAddress();
-    writer.print("stacktrace:\n", .{}) catch unreachable;
-    var call_stack = std.debug.StackIterator.init(first_trace_address, null);
-    while (call_stack.next()) |stack_return_address| {
-        if (stack_return_address == 0) continue;
-        const call_address = stack_return_address - 1;
-        writer.print("???: 0x{X:0>16} in ???\n", .{call_address}) catch unreachable;
+pub const Panic = struct {
+    pub fn call(
+        message: []const u8,
+        error_return_trace: ?*std.builtin.StackTrace,
+        return_address: ?usize,
+    ) noreturn {
+        @branchHint(.cold);
+        _ = error_return_trace;
+
+        debugPrint("kernel panic: {s}\n", .{message});
+
+        // FIXME: `catch unreachable` everywhere.
+        const first_trace_address = return_address orelse @returnAddress();
+        debugPrint("stacktrace:\n", .{});
+        var call_stack = std.debug.StackIterator.init(first_trace_address, null);
+        while (call_stack.next()) |stack_return_address| {
+            if (stack_return_address == 0) continue;
+            const call_address = stack_return_address - 1;
+            debugPrint("???: 0x{X:0>16} in ???\n", .{call_address});
+        }
+
+        native.hang();
     }
 
-    hang();
-}
+    pub const sentinelMismatch = std.debug.FormattedPanic.sentinelMismatch;
+    pub const unwrapError = std.debug.FormattedPanic.unwrapError;
+    pub const outOfBounds = std.debug.FormattedPanic.outOfBounds;
+    pub const startGreaterThanEnd = std.debug.FormattedPanic.startGreaterThanEnd;
+    pub const inactiveUnionField = std.debug.FormattedPanic.inactiveUnionField;
+
+    pub const messages = std.debug.FormattedPanic.messages;
+};

@@ -40,8 +40,7 @@ pub fn writeByte(self: *Console, byte: u8) void {
                 var it = row_data.iterator(.{});
                 while (it.next()) |mirrored_column| {
                     const column = font.width - mirrored_column;
-                    const line = self.framebuffer.scanline(y_offset + row);
-                    line[x_offset + column] = 0xFFFFFFFF;
+                    self.framebuffer.setPixelColor(x_offset + column, y_offset + row, 0xFFFFFFFF);
                 }
             }
         },
@@ -70,15 +69,11 @@ pub fn resetCursor(self: *Console) void {
     self.y = 0;
 }
 
-// TODO: Arbitrary scroll amount.
+// TODO: This can't be implemented efficiently without a CPU-side buffer. Just
+// clear the screen and reset the cursor to the top for now.
 fn scrollLine(self: *Console) void {
-    const history = self.framebuffer.verticalRegion(font.height, self.y);
-    const destination = self.framebuffer.verticalRegion(0, self.y - font.height);
-    std.mem.copyForwards(u32, destination, history);
-
-    self.y -= font.height;
-    const line = self.framebuffer.verticalRegion(self.y, self.y + font.height);
-    @memset(line, 0x00000000);
+    self.framebuffer.clear();
+    self.resetCursor();
 }
 
 pub const Writer = std.io.Writer(*Console, WriteError, write);

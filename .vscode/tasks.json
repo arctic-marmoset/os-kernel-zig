@@ -17,7 +17,6 @@
             "label": "launch QEMU",
             "type": "shell",
             "isBackground": true,
-            "dependsOn": "build",
             "command": "qemu-system-x86_64",
             "args": [
                 "-cpu",
@@ -28,10 +27,12 @@
                 "-S",
                 "-d",
                 "guest_errors,unimp",
+                "-no-reboot",
+                "-no-shutdown",
                 "-drive",
                 "if=pflash,format=raw,readonly=on,file=vendor/edk2-ovmf/x64/OVMF_CODE.fd",
                 "-drive",
-                "if=pflash,format=raw,file=zig-out/OVMF_VARS.fd",
+                "if=pflash,format=raw,file=zig-out/nvram/OVMF_VARS.fd",
                 "-drive",
                 "format=raw,file=fat:rw:zig-out/hdd"
             ],
@@ -50,6 +51,6 @@
                 "ReleaseSmall"
             ],
             "default": "Debug"
-        },
+        }
     ]
 }
