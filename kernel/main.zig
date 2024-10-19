@@ -28,7 +28,7 @@ export fn _start() noreturn {
     serial.init();
 
     if (!limine_base_revision.isSupported()) {
-        serial.writer().writeAll("bootloader does not support expected base revision\r\n") catch unreachable;
+        std.log.err("bootloader does not support expected base revision", .{});
         native.crashAndBurn();
     }
 
@@ -63,6 +63,10 @@ export fn _start() noreturn {
 
     paging.init() catch |e| {
         std.debug.panic("failed to initialise page tables: {}", .{e});
+    };
+
+    pmm.reclaimBootloaderMemory(memory_map_response.entries()) catch |e| {
+        std.debug.panic("failed to reclaim bootloader memory: {}", .{e});
     };
 
     @panic("scheduler returned control to kernel init function");
@@ -119,7 +123,6 @@ pub const Panic = struct {
 
         debugPrint("kernel panic: {s}\n", .{message});
 
-        // FIXME: `catch unreachable` everywhere.
         const first_trace_address = return_address orelse @returnAddress();
         debugPrint("stacktrace:\n", .{});
         var call_stack = std.debug.StackIterator.init(first_trace_address, null);

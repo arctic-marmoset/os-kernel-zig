@@ -11,7 +11,7 @@ pub fn init(memory_map: []*limine.MemoryMapEntry, hhdm_offset: u64) !void {
     // First pass to determine bitmap size and print.
     var used_memory: usize = 0;
     var free_memory: usize = 0;
-    var conventional_end: usize = 0;
+    var physical_address_end: u64 = 0;
     for (memory_map) |entry| {
         switch (entry.type) {
             .acpi_reclaimable,
@@ -34,7 +34,7 @@ pub fn init(memory_map: []*limine.MemoryMapEntry, hhdm_offset: u64) !void {
         });
 
         if (entry.type.isConventional()) {
-            conventional_end = @max(conventional_end, entry.base.value + entry.length);
+            physical_address_end = @max(physical_address_end, entry.base.value + entry.length);
         }
     }
     const total_memory = used_memory + free_memory;
@@ -43,8 +43,8 @@ pub fn init(memory_map: []*limine.MemoryMapEntry, hhdm_offset: u64) !void {
         std.fmt.fmtIntSizeBin(total_memory),
     });
 
-    log.debug("end of physical address range: 0x{X:0>16}", .{conventional_end});
-    const bitmap_length = conventional_end / std.mem.page_size;
+    log.debug("end of physical address range: 0x{X:0>16}", .{physical_address_end});
+    const bitmap_length = physical_address_end / std.mem.page_size;
     const bitmap_size = bitmap_length / std.mem.byte_size_in_bits;
     log.debug("bitmap size: {}", .{std.fmt.fmtIntSizeBin(bitmap_size)});
 
@@ -66,7 +66,7 @@ pub fn init(memory_map: []*limine.MemoryMapEntry, hhdm_offset: u64) !void {
     }
 
     // Allocate bitmap.
-    log.debug("allocating bitmap at: 0x{X:0>16}", .{best_fit_address.value});
+    log.debug("allocating bitmap at {X:0>16}", .{best_fit_address.value});
     _bitmap.bit_length = bitmap_length;
     _bitmap.masks = @ptrFromInt(physicalToVirtual(best_fit_address).value);
 
@@ -91,12 +91,25 @@ pub fn init(memory_map: []*limine.MemoryMapEntry, hhdm_offset: u64) !void {
         .start = bitmap_frame_start,
         .end = bitmap_frame_start + bitmap_frame_count,
     }, false);
+}
 
-    // Sanity test.
-    const page = try allocPage();
-    std.log.debug("allocated page: {X}", .{virtualToPhysical(.{ .value = @intFromPtr(page) }).value});
-    @memset(page[0..std.mem.page_size], 0);
-    freePage(page);
+pub fn reclaimBootloaderMemory(memory_map: []*limine.MemoryMapEntry) !void {
+    var local_memory_map = std.BoundedArray(limine.MemoryMapEntry, 64){};
+    for (memory_map) |entry| {
+        try local_memory_map.append(entry.*);
+    }
+
+    for (local_memory_map.slice()) |entry| {
+        if (entry.type == .bootloader_reclaimable) {
+            const address = entry.base;
+            const index = address.value / std.mem.page_size;
+            const frame_count = entry.length / std.mem.page_size;
+            _bitmap.setRangeValue(.{
+                .start = index,
+                .end = index + frame_count,
+            }, true);
+        }
+    }
 }
 
 pub fn physicalToVirtual(address: mem.PhysicalAddress) mem.VirtualAddress {
@@ -113,6 +126,7 @@ var _bitmap: std.DynamicBitSetUnmanaged = .{};
 pub fn allocPage() ![*]align(std.mem.page_size) u8 {
     const index = _bitmap.toggleFirstSet() orelse return error.OutOfMemory;
     const physical_address = mem.PhysicalAddress.init(index * std.mem.page_size);
+    log.debug("alloc: {X:0>16}", .{physical_address.value});
     const virtual_address = physicalToVirtual(physical_address);
     return @ptrFromInt(virtual_address.value);
 }
@@ -120,6 +134,7 @@ pub fn allocPage() ![*]align(std.mem.page_size) u8 {
 pub fn freePage(ptr: [*]align(std.mem.page_size) u8) void {
     const virtual_address = mem.VirtualAddress.init(@intFromPtr(ptr));
     const physical_address = virtualToPhysical(virtual_address);
+    log.debug("free:  {X:0>16}", .{physical_address.value});
     const index = physical_address.value / std.mem.page_size;
     _bitmap.set(index);
 }

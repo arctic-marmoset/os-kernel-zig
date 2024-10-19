@@ -38,7 +38,11 @@ pub fn init() !void {
             for (pdpt.entries, &new_pdpt.entries) |pdpte, *new_pdpte| {
                 if (pdpte.present) {
                     new_pdpte.* = pdpte;
-                    const pdt_address = pdpte.getAddress();
+                    if (pdpte.leaf) {
+                        continue;
+                    }
+
+                    const pdt_address = pdpte.getTableAddress();
 
                     const pdt: *align(std.mem.page_size) native.PDT = @ptrFromInt(
                         pmm.physicalToVirtual(pdt_address).value,
@@ -47,7 +51,7 @@ pub fn init() !void {
                     const new_pdt: *align(std.mem.page_size) native.PDT = @ptrCast(
                         try pmm.allocPage(),
                     );
-                    new_pdpte.setAddress(
+                    new_pdpte.setTableAddress(
                         pmm.virtualToPhysical(.{
                             .value = @intFromPtr(new_pdt),
                         }),
@@ -57,7 +61,11 @@ pub fn init() !void {
                     for (pdt.entries, &new_pdt.entries) |pdte, *new_pdte| {
                         if (pdte.present) {
                             new_pdte.* = pdte;
-                            const pt_address = pdte.getAddress();
+                            if (pdte.leaf) {
+                                continue;
+                            }
+
+                            const pt_address = pdte.getTableAddress();
 
                             const pt: *align(std.mem.page_size) native.PT = @ptrFromInt(
                                 pmm.physicalToVirtual(pt_address).value,
@@ -66,18 +74,13 @@ pub fn init() !void {
                             const new_pt: *align(std.mem.page_size) native.PT = @ptrCast(
                                 try pmm.allocPage(),
                             );
-                            new_pdte.setAddress(
+                            new_pdte.setTableAddress(
                                 pmm.virtualToPhysical(.{
                                     .value = @intFromPtr(new_pt),
                                 }),
                             );
 
-                            new_pt.* = .{};
-                            for (pt.entries, &new_pt.entries) |pte, *new_pte| {
-                                if (pte.present) {
-                                    new_pte.* = pte;
-                                }
-                            }
+                            @memcpy(&new_pt.entries, &pt.entries);
                         }
                     }
                 }

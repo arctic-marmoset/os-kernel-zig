@@ -118,12 +118,27 @@ fn PTEFunctionsMixin(
     comptime Self: type,
 ) type {
     return struct {
-        pub fn getAddress(self: Self) mem.PhysicalAddress {
-            return .{ .value = @as(u64, self.page_frame_index) << 12 };
+        const page_address_width = @bitSizeOf(std.meta.FieldType(Self.Data.Page, .address));
+        const page_address_shift_amount = @bitSizeOf(u64) - page_address_width;
+
+        pub fn getTableAddress(self: Self) mem.PhysicalAddress {
+            std.debug.assert(!self.leaf);
+            return .{ .value = @as(u64, self.data.table.address) * std.mem.page_size };
         }
 
-        pub fn setAddress(self: *Self, address: mem.PhysicalAddress) void {
-            self.page_frame_index = @truncate(address.value >> 12);
+        pub fn setTableAddress(self: *Self, address: mem.PhysicalAddress) void {
+            std.debug.assert(!self.leaf);
+            self.data.table.address = @truncate(address.value / std.mem.page_size);
+        }
+
+        pub fn getPageAddress(self: Self) mem.PhysicalAddress {
+            std.debug.assert(self.leaf);
+            return .{ .value = self.data.page.address << page_address_shift_amount };
+        }
+
+        pub fn setPageAddress(self: *Self, address: mem.PhysicalAddress) void {
+            std.debug.assert(self.leaf);
+            self.data.page.address = address.value >> page_address_shift_amount;
         }
     };
 }
@@ -142,74 +157,124 @@ pub const PML4E = packed struct(u64) {
     _ignored0: u1,
     _reserved0: u1 = 0,
     _ignored1: u4,
-    page_frame_index: u40,
+    address: u40,
     _ignored2: u11,
     not_executable: bool,
 
-    pub usingnamespace PTEFunctionsMixin(PML4E);
+    pub fn getAddress(self: PML4E) mem.PhysicalAddress {
+        return .{ .value = @as(u64, self.address) * std.mem.page_size };
+    }
+
+    pub fn setAddress(self: *PML4E, address: mem.PhysicalAddress) void {
+        self.address = @truncate(address.value / std.mem.page_size);
+    }
 };
 
 pub const PDPT = extern struct {
-    entries: [page_table_entry_count]PDPTE = .{std.mem.zeroes(PDPTE)} ** page_table_entry_count,
+    entries: [page_table_entry_count]PDPTE = .{.{}} ** page_table_entry_count,
 };
 
 pub const PDPTE = packed struct(u64) {
     present: bool = false,
-    writable: bool,
-    user_accessible: bool,
-    writethrough: bool,
-    uncacheable: bool,
-    accessed: bool,
-    _ignored0: u1,
-    leaf: bool,
-    _ignored1: u4,
-    page_frame_index: u40,
-    _ignored2: u11,
-    not_executable: bool,
+    writable: bool = false,
+    user_accessible: bool = false,
+    writethrough: bool = false,
+    uncacheable: bool = false,
+    accessed: bool = false,
+    _ignored0: u1 = 0,
+    leaf: bool = false,
+    data: Data = .{ .table = .{} },
+    not_executable: bool = false,
 
     pub usingnamespace PTEFunctionsMixin(PDPTE);
+
+    pub const Data = packed union {
+        table: Table,
+        page: Page,
+
+        pub const Table = packed struct(u55) {
+            _ignored1: u4 = 0,
+            address: u40 = 0,
+            _ignored2: u11 = 0,
+        };
+
+        pub const Page = packed struct(u55) {
+            global: bool = false,
+            _ignored1: u3 = 0,
+            pat: bool = false,
+            _reserved0: u17 = 0,
+            address: u22 = 0,
+            _ignored2: u7 = 0,
+            protection_key: u4 = 0,
+        };
+    };
 };
 
 pub const PDT = extern struct {
-    entries: [page_table_entry_count]PDTE = .{std.mem.zeroes(PDTE)} ** page_table_entry_count,
+    entries: [page_table_entry_count]PDTE = .{.{}} ** page_table_entry_count,
 };
 
 pub const PDTE = packed struct(u64) {
     present: bool = false,
-    writable: bool,
-    user_accessible: bool,
-    writethrough: bool,
-    uncacheable: bool,
-    accessed: bool,
-    _ignored0: u1,
-    leaf: bool,
-    _ignored1: u4,
-    page_frame_index: u40,
-    _ignored2: u11,
-    not_executable: bool,
+    writable: bool = false,
+    user_accessible: bool = false,
+    writethrough: bool = false,
+    uncacheable: bool = false,
+    accessed: bool = false,
+    _ignored0: u1 = 0,
+    leaf: bool = false,
+    data: Data = .{ .table = .{} },
+    not_executable: bool = false,
 
     pub usingnamespace PTEFunctionsMixin(PDTE);
+
+    pub const Data = packed union {
+        table: Table,
+        page: Page,
+
+        pub const Table = packed struct(u55) {
+            _ignored1: u4 = 0,
+            address: u40 = 0,
+            _ignored2: u11 = 0,
+        };
+
+        pub const Page = packed struct(u55) {
+            global: bool = false,
+            _ignored1: u3 = 0,
+            pat: bool = false,
+            _reserved0: u8 = 0,
+            address: u31 = 0,
+            _ignored2: u7 = 0,
+            protection_key: u4 = 0,
+        };
+    };
 };
 
 pub const PT = extern struct {
-    entries: [page_table_entry_count]PTE = .{std.mem.zeroes(PTE)} ** page_table_entry_count,
+    entries: [page_table_entry_count]PTE = .{.{}} ** page_table_entry_count,
 };
 
 pub const PTE = packed struct(u64) {
     present: bool = false,
-    writable: bool,
-    user_accessible: bool,
-    writethrough: bool,
-    uncacheable: bool,
-    accessed: bool,
-    dirty: bool,
-    pat: bool,
-    global: bool,
-    _ignored1: u3,
-    page_frame_index: u40,
-    _ignored2: u7,
-    protection_key: u4,
-    not_executable: bool,
+    writable: bool = false,
+    user_accessible: bool = false,
+    writethrough: bool = false,
+    uncacheable: bool = false,
+    accessed: bool = false,
+    dirty: bool = false,
+    pat: bool = false,
+    global: bool = false,
+    _ignored1: u3 = 0,
+    address: u40 = 0,
+    _ignored2: u7 = 0,
+    protection_key: u4 = 0,
+    not_executable: bool = false,
 
-    pub usingnamespace PTEFunctionsMixin(PTE);
+    pub fn getAddress(self: PML4E) mem.PhysicalAddress {
+        return .{ .value = @as(u64, self.address) * std.mem.page_size };
+    }
+
+    pub fn setAddress(self: *PML4E, address: mem.PhysicalAddress) void {
+        self.address = @truncate(address.value / std.mem.page_size);
+    }
 };
