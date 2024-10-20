@@ -2,10 +2,12 @@ const std = @import("std");
 
 const native = @import("native.zig");
 
-extern const interruptHandlerTable: [native.IDT.entry_count]*const fn () callconv(.Naked) void;
-
 pub fn init() void {
-    for (&_idt.entries, interruptHandlerTable) |*entry, handler| {
+    const handler0_address = @intFromPtr(&interruptHandler0);
+    for (&_idt.entries, 0..) |*entry, i| {
+        const handler: *const InterruptHandlerFn = @ptrFromInt(
+            handler0_address + (i * 16),
+        );
         entry.setHandler(handler);
         entry.selector = 8;
         entry.flags.present = true;
@@ -27,6 +29,10 @@ fn loadInterruptTable(table: *const native.IDT) void {
         : [idtr] "*m" (idtr),
     );
 }
+
+const InterruptHandlerFn = fn () callconv(.Naked) void;
+
+extern fn interruptHandler0() callconv(.Naked) void;
 
 extern fn raiseDivByZero() void;
 
@@ -123,7 +129,7 @@ export fn interruptDispatcher(context: *const Context) void {
             },
             else => {},
         }
-    } else {
-        std.debug.panic("not implemented: interrupt {X:0>2}", .{context.vector});
     }
+
+    std.log.err("not implemented: interrupt {X:0>2}", .{context.vector});
 }

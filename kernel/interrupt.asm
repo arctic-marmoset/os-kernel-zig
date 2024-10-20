@@ -42,6 +42,7 @@ interruptThunk:
 
 %macro defhandleradddummyerror 1
 	global	interruptHandler%+%1
+	align	16
 interruptHandler%+%1:
 	push	0
 	push	%1
@@ -50,6 +51,7 @@ interruptHandler%+%1:
 
 %macro defhandler 1
 	global	interruptHandler%+%1
+	align	16
 interruptHandler%+%1:
 	push	%1
 	jmp	interruptThunk
@@ -74,14 +76,6 @@ interruptHandler%+%1:
   %assign vectorindex vectorindex + 1
 %endrep
 
-	section .rodata
-	global	interruptHandlerTable
-interruptHandlerTable:
-%assign vectorindex 0
-%rep 256
-	dq	interruptHandler%+vectorindex
-  %assign vectorindex vectorindex + 1
-%endrep
 
 	global	raiseDivByZero
 raiseDivByZero:
