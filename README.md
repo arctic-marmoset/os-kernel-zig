@@ -13,31 +13,10 @@ An Operating System kernel written for academic purposes.
 
 ### Debugging
 
-Do the following in any order:
+Do the following:
 
-- Run one of the "Debug" launch presets in VSCode.
-- Open command palette &rarr; Tasks: Run Task &rarr; launch QEMU.
-
-#### Loading Debug Symbols for the Bootloader
-
-1. Break in with LLDB.
-2. In VSCode's "Debug Console", enter the command `uefi load-symbols`.
-3. Step over.
-
-Note: Since the bootloader is written for UEFI, it follows the MSVC ABI, and
-therefore produces debug symbols in PDB format. However, as of LLVM 15, LLDB
-will often crash when stepping through code if symbols are loaded from PDB
-files.
-
-#### Loading Debug Symbols for the Kernel
-
-1. Break in with LLDB.
-2. In VSCode's "Debug Console", enter the following commands:
-```
-image add zig-out/hdd/kernel.elf
-image load --file zig-out/hdd/kernel.elf --slide 0
-```
-3. Step over.
+1. Run one of the "Debug" launch presets in VSCode.
+2. Open command palette &rarr; Tasks: Run Task &rarr; launch QEMU.
 
 Note: The kernel is currently always loaded at the same address. If/when this
 no longer becomes the case, the `.text` address will have to be specified
