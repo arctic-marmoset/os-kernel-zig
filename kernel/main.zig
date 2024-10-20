@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const interrupt = @import("interrupt.zig");
 const limine = @import("limine.zig");
 const native = @import("native.zig");
 const paging = @import("paging.zig");
@@ -70,6 +71,8 @@ export fn _start() noreturn {
     pmm.reclaimBootloaderMemory(memory_map_response.entries()) catch |e| {
         std.debug.panic("failed to reclaim bootloader memory: {}", .{e});
     };
+
+    interrupt.init();
 
     @panic("scheduler returned control to kernel init function");
 }

@@ -50,6 +50,13 @@ pub fn build(b: *std.Build) void {
     const native_object = build_native.addOutputFileArg("native.asm.o");
     build_native.addFileArg(b.path("kernel/native.asm"));
     kernel.addObjectFile(native_object);
+    const build_interrupt = b.addSystemCommand(&.{ "nasm", "-f", "elf64" });
+    build_interrupt.addArg("-w+all");
+    build_interrupt.addArg("-g");
+    build_interrupt.addArg("-o");
+    const interrupt_object = build_interrupt.addOutputFileArg("interrupt.asm.o");
+    build_interrupt.addFileArg(b.path("kernel/interrupt.asm"));
+    kernel.addObjectFile(interrupt_object);
 
     const tests = b.addTest(.{
         .root_source_file = b.path("test/main.zig"),

@@ -60,7 +60,11 @@ pub inline fn disableInterrupts() void {
     asm volatile ("cli");
 }
 
-pub inline fn halt() void {
+pub inline fn enableInterrupts() void {
+    asm volatile ("sti");
+}
+
+pub inline fn waitForInterrupt() void {
     asm volatile ("hlt");
 }
 
@@ -68,7 +72,7 @@ pub inline fn halt() void {
 pub inline fn hang() noreturn {
     disableInterrupts();
     while (true) {
-        halt();
+        waitForInterrupt();
     }
 }
 
@@ -139,11 +143,17 @@ comptime {
     std.testing.expectEqual(80, @bitSizeOf(IDTR)) catch unreachable;
 }
 
+pub const IDT align(16) = extern struct {
+    entries: [entry_count]IDTEntry = .{std.mem.zeroes(IDTEntry)} ** entry_count,
+
+    pub const entry_count = 256;
+};
+
 pub const IDTEntry = extern struct {
     address_15_0: u16 = 0,
     /// The code selector that will be loaded into the CS register before
     /// invoking the interrupt handler.
-    selector: u16 align(1) = 0,
+    selector: u16 align(1),
     ist: u8 align(1) = 0,
     flags: Flags align(1) = .{ .type = .null, .present = false },
     address_31_16: u16 align(1) = 0,
@@ -169,12 +179,9 @@ pub const IDTEntry = extern struct {
 
     pub fn setHandler(self: *IDTEntry, handler: *const fn () callconv(.Naked) void) void {
         const address = @intFromPtr(handler);
-        self.* = .{
-            .address_15_0 = @truncate(address),
-            .address_31_16 = @truncate(address >> 16),
-            .address_63_32 = @truncate(address >> 32),
-            .flags = .{ .type = .interrupt, .present = true },
-        };
+        self.address_15_0 = @truncate(address);
+        self.address_31_16 = @truncate(address >> 16);
+        self.address_63_32 = @truncate(address >> 32);
     }
 };
 
@@ -206,9 +213,7 @@ pub fn cpuid(leaf: u32) struct {
 
 const page_table_entry_count = std.mem.page_size / @sizeOf(u64);
 
-fn PTEFunctionsMixin(
-    comptime Self: type,
-) type {
+fn PTEFunctionsMixin(comptime Self: type) type {
     return struct {
         const page_address_width = @bitSizeOf(std.meta.FieldType(Self.Data.Page, .address));
         const page_address_shift_amount = @bitSizeOf(u64) - page_address_width;
