@@ -6,10 +6,11 @@ An Operating System kernel written for academic purposes.
 
 ### Set-up
 
-1. Install QEMU for your development system.
-2. Install the Zig toolchain and add it to your path.
-3. Install VSCode.
-4. Install all recommended VSCode extensions when prompted.
+1. Install QEMU and add it to your $PATH.
+2. Install the Zig toolchain and add it to your $PATH.
+3. Install NASM and add it to your $PATH.
+4. Install VSCode.
+5. Install all recommended VSCode extensions when prompted.
 
 ### Debugging
 
