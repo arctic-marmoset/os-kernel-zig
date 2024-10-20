@@ -74,12 +74,6 @@ export fn _start() noreturn {
     @panic("scheduler returned control to kernel init function");
 }
 
-pub const os = struct {
-    pub const heap = struct {
-        pub const page_allocator = pmm.page_allocator;
-    };
-};
-
 pub const std_options: std.Options = .{
     .logFn = logToConsole,
 };
