@@ -2,6 +2,60 @@ const std = @import("std");
 
 const mem = @import("mem.zig");
 
+extern fn reloadSegmentRegisters() void;
+
+/// Architecture-specific pre-initialisation.
+pub fn init() void {
+    const gdtr: GDTR = .{
+        .limit = @sizeOf(@TypeOf(gdt)) - 1,
+        .base_address = @intFromPtr(&gdt),
+    };
+    asm volatile ("lgdt %[gdtr]"
+        :
+        : [gdtr] "*m" (gdtr),
+    );
+
+    reloadSegmentRegisters();
+}
+
+var gdt align(8) = [_]GDTEntry{
+    // Null descriptor
+    .init(.{
+        .address = 0x00000000,
+        .limit = 0x000000,
+        .access = 0x00,
+        .flags = 0x0,
+    }),
+    // Kernel-mode code segment
+    .init(.{
+        .address = 0x00000000,
+        .limit = 0xFFFFF,
+        .access = 0x9A,
+        .flags = 0xA,
+    }),
+    // Kernel-mode data segment
+    .init(.{
+        .address = 0x00000000,
+        .limit = 0xFFFFF,
+        .access = 0x92,
+        .flags = 0xC,
+    }),
+    // User-mode code segment
+    .init(.{
+        .address = 0x00000000,
+        .limit = 0xFFFFF,
+        .access = 0xFA,
+        .flags = 0xA,
+    }),
+    // User-mode data segment
+    .init(.{
+        .address = 0x00000000,
+        .limit = 0xFFFFF,
+        .access = 0xF2,
+        .flags = 0xC,
+    }),
+};
+
 pub inline fn disableInterrupts() void {
     asm volatile ("cli");
 }
@@ -34,20 +88,59 @@ pub fn crashAndBurn() noreturn {
     };
     asm volatile ("lidt %[idtr]"
         :
-        : [idtr] "m" (&idtr),
+        : [idtr] "*m" (idtr),
     );
 
     // Invoke #UD.
     @trap();
 }
 
+pub const GDTR = extern struct {
+    limit: u16,
+    base_address: u64 align(1),
+};
+
+comptime {
+    std.testing.expectEqual(80, @bitSizeOf(GDTR)) catch unreachable;
+    std.testing.expectEqual(10, @sizeOf(GDTR)) catch unreachable;
+}
+
+pub const GDTEntry = packed struct(u64) {
+    limit_15_0: u16 = 0,
+    address_23_0: u24 = 0,
+    access: u8 = 0,
+    limit_19_16: u4 = 0,
+    flags: u4 = 0,
+    address_31_24: u8 = 0,
+
+    pub fn init(info: struct {
+        address: u32,
+        limit: u20,
+        access: u8,
+        flags: u4,
+    }) GDTEntry {
+        return .{
+            .limit_15_0 = @truncate(info.limit),
+            .address_23_0 = @truncate(info.address),
+            .access = info.access,
+            .limit_19_16 = @truncate(info.limit >> 16),
+            .flags = info.flags,
+            .address_31_24 = @truncate(info.address >> 24),
+        };
+    }
+};
+
 pub const IDTR = extern struct {
     limit: u16 align(1) = 0xFFF,
     base_address: u64 align(1),
 };
 
+comptime {
+    std.testing.expectEqual(80, @bitSizeOf(IDTR)) catch unreachable;
+}
+
 pub const IDTEntry = extern struct {
-    address_15_0: u16 align(1) = 0,
+    address_15_0: u16 = 0,
     /// The code selector that will be loaded into the CS register before
     /// invoking the interrupt handler.
     selector: u16 align(1) = 0,
@@ -59,7 +152,7 @@ pub const IDTEntry = extern struct {
 
     pub const Flags = packed struct(u8) {
         type: Type,
-        _reserved4: u1 = 0,
+        _reserved_4: u1 = 0,
         /// Specifies which CPU rings can trigger this vector with a software
         /// interrupt. If code in another ring tries to trigger the vector, a
         /// general protection fault will be triggered instead.
@@ -86,7 +179,6 @@ pub const IDTEntry = extern struct {
 };
 
 comptime {
-    std.testing.expectEqual(80, @bitSizeOf(IDTR)) catch unreachable;
     std.testing.expectEqual(128, @bitSizeOf(IDTEntry)) catch unreachable;
 }
 

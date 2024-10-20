@@ -43,7 +43,13 @@ pub fn build(b: *std.Build) void {
         kernel.root_module.omit_frame_pointer = false;
         kernel.root_module.code_model = .kernel;
     }
-    kernel.addSystemIncludePath(b.path("external/limine/include"));
+    const build_native = b.addSystemCommand(&.{ "nasm", "-f", "elf64" });
+    build_native.addArg("-w+all");
+    build_native.addArg("-g");
+    build_native.addArg("-o");
+    const native_object = build_native.addOutputFileArg("native.asm.o");
+    build_native.addFileArg(b.path("kernel/native.asm"));
+    kernel.addObjectFile(native_object);
 
     const tests = b.addTest(.{
         .root_source_file = b.path("test/main.zig"),

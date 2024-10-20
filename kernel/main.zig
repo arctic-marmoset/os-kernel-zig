@@ -32,6 +32,8 @@ export fn _start() noreturn {
         native.crashAndBurn();
     }
 
+    native.init();
+
     if (framebuffer_request.response) |response| {
         if (response.framebuffer_count > 0) {
             const framebuffer_description = response.framebuffers_ptr[0];
